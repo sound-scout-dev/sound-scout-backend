@@ -6,11 +6,20 @@ const pool = require('../config/db');
 router.post('/', async (req, res) => {
     const { event_id, vendor_id, proposed_price } = req.body;
 
+    if (!event_id || !vendor_id || proposed_price === undefined) {
+        return res.status(400).json({ error: 'event_id, vendor_id and proposed_price are required.' });
+    }
+
+    const price = Number(proposed_price);
+    if (!Number.isFinite(price) || price <= 0) {
+        return res.status(400).json({ error: 'proposed_price must be a positive number.' });
+    }
+
     try {
         const result = await pool.query(
             `INSERT INTO bids (event_id, vendor_id, proposed_price) 
        VALUES ($1, $2, $3) RETURNING *`,
-            [event_id, vendor_id, proposed_price]
+            [event_id, vendor_id, price]
         );
         res.status(201).json({ message: 'Bid placed successfully!', bid: result.rows[0] });
     } catch (err) {
