@@ -1,0 +1,225 @@
+openapi: 3.0.0
+info:
+  title: SoundScout AI API
+  description: Core backend API for the SoundScout Event Infrastructure Platform.
+  version: 1.0.0
+
+servers:
+  - url: /api
+    description: API base path
+
+paths:
+  # ---------------- USER ROUTES ---------------- #
+  /users/register:
+    post:
+      summary: Register a new user (Organizer or Vendor)
+      tags:
+        - Users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserRegistration"
+      responses:
+        "201":
+          description: User successfully created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "500":
+          description: Server error
+
+  # ---------------- EVENT ROUTES (TRACK 1) ---------------- #
+  /events:
+    post:
+      summary: Organizer submits a new event for AI scoping
+      tags:
+        - Events
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewEvent"
+      responses:
+        "201":
+          description: Event created successfully
+        "500":
+          description: Server error
+
+  /events/open:
+    get:
+      summary: Fetch all open events for vendor bidding dashboard
+      tags:
+        - Events
+      responses:
+        "200":
+          description: A list of open events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+
+  # ---------------- BIDDING ROUTES ---------------- #
+  /bids:
+    post:
+      summary: Vendor places a bid on an event
+      tags:
+        - Bids
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewBid"
+      responses:
+        "201":
+          description: Bid placed successfully
+
+  /bids/event/{eventId}:
+    get:
+      summary: Organizer views all bids for a specific event
+      tags:
+        - Bids
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of bids sorted by price
+
+  /bids/{bidId}/accept:
+    put:
+      summary: Organizer accepts a winning bid and closes the event
+      tags:
+        - Bids
+      parameters:
+        - name: bidId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - organizer_id
+              properties:
+                organizer_id:
+                  type: integer
+      responses:
+        "200":
+          description: Bid accepted and event closed
+
+  # ---------------- INVENTORY ROUTES (TRACK 2) ---------------- #
+  /inventory/instant/{region}:
+    get:
+      summary: Fetch up to 5 vendor shops that exactly match the requested region
+      tags:
+        - Inventory
+      parameters:
+        - name: region
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "Colombo 03"
+      responses:
+        "200":
+          description: List of available nearby vendors
+        "404":
+          description: No shops found in region
+
+components:
+  schemas:
+    UserRegistration:
+      type: object
+      required:
+        - name
+        - email
+        - role
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [organizer, vendor]
+        region:
+          type: string
+          description: Required for vendors to map Track 2 locations
+
+    User:
+      type: object
+      properties:
+        user_id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+        region:
+          type: string
+
+    NewEvent:
+      type: object
+      required:
+        - organizer_id
+        - event_type
+        - crowd_count
+      properties:
+        organizer_id:
+          type: integer
+        event_type:
+          type: string
+        crowd_count:
+          type: integer
+        venue_size_sqm:
+          type: integer
+        budget_range:
+          type: string
+
+    Event:
+      type: object
+      properties:
+        event_id:
+          type: integer
+        organizer_id:
+          type: integer
+        event_type:
+          type: string
+        crowd_count:
+          type: integer
+        ai_infrastructure_plan:
+          type: object
+        status:
+          type: string
+
+    NewBid:
+      type: object
+      required:
+        - event_id
+        - vendor_id
+        - proposed_price
+      properties:
+        event_id:
+          type: integer
+        vendor_id:
+          type: integer
+        proposed_price:
+          type: number
+          format: float
