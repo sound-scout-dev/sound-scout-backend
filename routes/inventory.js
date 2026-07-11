@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 
-// GET /api/inventory/instant/:region - Fetch nearest vendors for Track 2 emergency rentals
+// GET /api/inventory/instant/:region - Fetch up to 5 vendor shops matching an exact region (hackathon MVP)
 router.get('/instant/:region', async (req, res) => {
     const { region } = req.params;
 
