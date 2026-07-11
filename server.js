@@ -5,9 +5,29 @@ require('dotenv').config();
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
 const swaggerDocument = YAML.load('./openapi.yaml');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
 const port = process.env.PORT || 5000;
+
+// Create HTTP Server and Socket.io instance
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: "*", // allow all origins for the hackathon
+        methods: ["GET", "POST", "PUT", "DELETE"]
+    }
+});
+// Make io accessible to our routers
+app.set('io', io);
+// Log when a client connects
+io.on('connection', (socket) => {
+    console.log(`⚡ Socket: Client connected [id: ${socket.id}]`);
+    socket.on('disconnect', () => {
+        console.log(`🔌 Socket: Client disconnected [id: ${socket.id}]`);
+    });
+});
 
 // Middleware
 app.use(cors());

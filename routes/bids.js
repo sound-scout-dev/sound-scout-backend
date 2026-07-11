@@ -1,3 +1,4 @@
+// routes/bids.js
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
@@ -21,7 +22,15 @@ router.post('/', async (req, res) => {
        VALUES ($1, $2, $3) RETURNING *`,
             [event_id, vendor_id, price]
         );
-        res.status(201).json({ message: 'Bid placed successfully!', bid: result.rows[0] });
+
+        const newBid = result.rows[0];
+
+        // --- NEW WEB SOCKET EMIT ---
+        // Access the io instance attached to the app and emit the event globally
+        const io = req.app.get('io');
+        io.emit('newBid', newBid);
+
+        res.status(201).json({ message: 'Bid placed successfully!', bid: newBid });
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error while placing bid.' });
