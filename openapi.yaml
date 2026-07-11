@@ -5,8 +5,8 @@ info:
   version: 1.0.0
 
 servers:
-  - url: http://localhost:5000/api
-    description: Local Development Server
+  - url: /api
+    description: API base path
 
 paths:
   # ---------------- USER ROUTES ---------------- #
