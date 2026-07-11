@@ -1,3 +1,4 @@
+// routes/events.js
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
@@ -34,6 +35,69 @@ router.get('/open', async (req, res) => {
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error fetching open events.' });
+    }
+});
+
+// POST /api/events/:eventId/generate-plan - Bridge to AI Microservice
+router.post('/:eventId/generate-plan', async (req, res) => {
+    const { eventId } = req.params;
+
+    try {
+        // 1. Fetch the event details to send context to the AI service
+        const eventResult = await pool.query(
+            'SELECT * FROM events WHERE event_id = $1',
+            [eventId]
+        );
+
+        if (eventResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Event not found.' });
+        }
+
+        const eventDetails = eventResult.rows[0];
+
+        // 2. Call the AI microservice via native fetch
+        // Uses an environment variable or falls back to a common Flask local port (8000)
+        const aiServiceUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000/api/generate';
+
+        const aiResponse = await fetch(aiServiceUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                event_type: eventDetails.event_type,
+                crowd_count: eventDetails.crowd_count,
+                venue_size_sqm: eventDetails.venue_size_sqm,
+                budget_range: eventDetails.budget_range
+            })
+        });
+
+        if (!aiResponse.ok) {
+            throw new Error(`AI service responded with status: ${aiResponse.status}`);
+        }
+
+        const aiData = await aiResponse.json();
+
+        // Ensure we're pulling the plan correctly depending on your Flask app's response structure
+        const equipmentPlan = aiData.equipment_plan || aiData;
+
+        // 3. Update the database with the generated plan
+        // JSON.stringify ensures the array/object maps cleanly to the PostgreSQL json/jsonb column
+        const updateResult = await pool.query(
+            `UPDATE events 
+             SET ai_infrastructure_plan = $1, status = 'bidding_open' 
+             WHERE event_id = $2 RETURNING *`,
+            [JSON.stringify(equipmentPlan), eventId]
+        );
+
+        res.status(200).json({
+            message: 'AI Plan generated successfully. Event is now open for bidding!',
+            event: updateResult.rows[0]
+        });
+
+    } catch (err) {
+        console.error('AI Bridge Error:', err.message);
+        res.status(500).json({ error: 'Server error while generating AI plan.' });
     }
 });
 
