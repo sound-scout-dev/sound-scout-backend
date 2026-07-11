@@ -13,6 +13,7 @@ router.get('/instant/:region', async (req, res) => {
             `SELECT user_id AS vendor_id, name AS shop_name, region 
        FROM users 
        WHERE role = 'vendor' AND region = $1 
+       ORDER BY name ASC
        LIMIT 5`,
             [region]
         );
