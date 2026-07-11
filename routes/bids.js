@@ -51,27 +51,36 @@ router.get('/event/:eventId', async (req, res) => {
 // PUT /api/bids/:bidId/accept - Organizer accepts a winning bid
 router.put('/:bidId/accept', async (req, res) => {
     const { bidId } = req.params;
-    const { event_id } = req.body; // Need event ID to close the event
 
+    const client = await pool.connect();
     try {
-        // Start a SQL transaction to update both tables safely
-        await pool.query('BEGIN');
+        await client.query('BEGIN');
 
-        // 1. Mark this specific bid as accepted
-        await pool.query("UPDATE bids SET status = 'accepted' WHERE bid_id = $1", [bidId]);
+        // Lock the bid row and derive event_id server-side (avoid trusting client input)
+        const bidResult = await client.query(
+            'SELECT event_id FROM bids WHERE bid_id = $1 FOR UPDATE',
+            [bidId]
+        );
 
-        // 2. Mark all other bids for this event as rejected
-        await pool.query("UPDATE bids SET status = 'rejected' WHERE event_id = $1 AND bid_id != $2", [event_id, bidId]);
+        if (bidResult.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Bid not found.' });
+        }
 
-        // 3. Update the event status to closed
-        await pool.query("UPDATE events SET status = 'closed' WHERE event_id = $1", [event_id]);
+        const eventId = bidResult.rows[0].event_id;
 
-        await pool.query('COMMIT');
+        await client.query("UPDATE bids SET status = 'accepted' WHERE bid_id = $1", [bidId]);
+        await client.query("UPDATE bids SET status = 'rejected' WHERE event_id = $1 AND bid_id != $2", [eventId, bidId]);
+        await client.query("UPDATE events SET status = 'closed' WHERE event_id = $1", [eventId]);
+
+        await client.query('COMMIT');
         res.status(200).json({ message: 'Bid accepted and event closed!' });
     } catch (err) {
-        await pool.query('ROLLBACK');
+        await client.query('ROLLBACK');
         console.error(err.message);
         res.status(500).json({ error: 'Server error accepting bid.' });
+    } finally {
+        client.release();
     }
 });
 
