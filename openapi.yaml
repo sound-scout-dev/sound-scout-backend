@@ -112,8 +112,10 @@ paths:
           application/json:
             schema:
               type: object
+              required:
+                - organizer_id
               properties:
-                event_id:
+                organizer_id:
                   type: integer
       responses:
         "200":
