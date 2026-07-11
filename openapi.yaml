@@ -124,7 +124,7 @@ paths:
   # ---------------- INVENTORY ROUTES (TRACK 2) ---------------- #
   /inventory/instant/{region}:
     get:
-      summary: Fetch nearest 5 rental shops for emergency Track 2 rentals
+      summary: Fetch up to 5 vendor shops that exactly match the requested region
       tags:
         - Inventory
       parameters:
