@@ -51,6 +51,11 @@ router.get('/event/:eventId', async (req, res) => {
 // PUT /api/bids/:bidId/accept - Organizer accepts a winning bid
 router.put('/:bidId/accept', async (req, res) => {
     const { bidId } = req.params;
+    const { organizer_id } = req.body;
+
+    if (!organizer_id) {
+        return res.status(400).json({ error: 'organizer_id is required.' });
+    }
 
     const client = await pool.connect();
     try {
@@ -68,6 +73,20 @@ router.put('/:bidId/accept', async (req, res) => {
         }
 
         const eventId = bidResult.rows[0].event_id;
+        const eventResult = await client.query(
+            'SELECT organizer_id FROM events WHERE event_id = $1 FOR UPDATE',
+            [eventId]
+        );
+
+        if (eventResult.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Event not found.' });
+        }
+
+        if (String(eventResult.rows[0].organizer_id) !== String(organizer_id)) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Unauthorized to accept bids for this event.' });
+        }
 
         await client.query("UPDATE bids SET status = 'accepted' WHERE bid_id = $1", [bidId]);
         await client.query("UPDATE bids SET status = 'rejected' WHERE event_id = $1 AND bid_id != $2", [eventId, bidId]);
