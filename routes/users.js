@@ -80,7 +80,7 @@ router.post('/login', async (req, res) => {
         // Store the hashed refresh token in database for rotation/revocation tracking
         const hashedRefreshToken = hashToken(refreshToken);
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
-        
+
         await pool.query(
             'INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
             [user.user_id, hashedRefreshToken, expiresAt]
@@ -154,8 +154,8 @@ router.post('/refresh', async (req, res) => {
                 await pool.query('DELETE FROM refresh_tokens WHERE user_id = $1', [decoded.user_id]);
                 res.clearCookie('refreshToken');
                 res.clearCookie('accessToken');
-            } catch (_) {}
-            
+            } catch (_) { }
+
             return res.status(403).json({ error: 'Session compromised. Please re-authenticate.' });
         }
 
