@@ -2,13 +2,15 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const { authenticateUser, requireRole } = require('../middleware/auth');
 
 // POST /api/bids - Vendor submits a bid for an event
-router.post('/', async (req, res) => {
-    const { event_id, vendor_id, proposed_price } = req.body;
+router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
+    const { event_id, proposed_price } = req.body;
+    const vendor_id = req.user.user_id; // Securely derive vendor identity
 
-    if (!event_id || !vendor_id || proposed_price === undefined) {
-        return res.status(400).json({ error: 'event_id, vendor_id and proposed_price are required.' });
+    if (!event_id || proposed_price === undefined) {
+        return res.status(400).json({ error: 'event_id and proposed_price are required.' });
     }
 
     const price = Number(proposed_price);
@@ -19,14 +21,13 @@ router.post('/', async (req, res) => {
     try {
         const result = await pool.query(
             `INSERT INTO bids (event_id, vendor_id, proposed_price) 
-       VALUES ($1, $2, $3) RETURNING *`,
+             VALUES ($1, $2, $3) RETURNING *`,
             [event_id, vendor_id, price]
         );
 
         const newBid = result.rows[0];
 
-        // --- NEW WEB SOCKET EMIT ---
-        // Access the io instance attached to the app and emit the event globally
+        // --- WEB SOCKET EMIT ---
         const io = req.app.get('io');
         io.emit('newBid', newBid);
 
@@ -38,16 +39,26 @@ router.post('/', async (req, res) => {
 });
 
 // GET /api/bids/event/:eventId - Organizer views all bids for their specific event
-router.get('/event/:eventId', async (req, res) => {
+router.get('/event/:eventId', authenticateUser, requireRole('organizer'), async (req, res) => {
     const { eventId } = req.params;
+    const organizer_id = req.user.user_id;
 
     try {
+        // Verify the event belongs to this organizer
+        const eventCheck = await pool.query('SELECT organizer_id FROM events WHERE event_id = $1', [eventId]);
+        if (eventCheck.rowCount === 0) {
+            return res.status(404).json({ error: 'Event not found.' });
+        }
+        if (eventCheck.rows[0].organizer_id !== organizer_id) {
+            return res.status(403).json({ error: 'Access forbidden. You do not own this event.' });
+        }
+
         const result = await pool.query(
             `SELECT b.bid_id, b.proposed_price, b.status, b.created_at, u.name AS vendor_name 
-       FROM bids b 
-       JOIN users u ON b.vendor_id = u.user_id 
-       WHERE b.event_id = $1 
-       ORDER BY b.proposed_price ASC`,
+             FROM bids b 
+             JOIN users u ON b.vendor_id = u.user_id 
+             WHERE b.event_id = $1 
+             ORDER BY b.proposed_price ASC`,
             [eventId]
         );
         res.status(200).json(result.rows);
@@ -58,13 +69,9 @@ router.get('/event/:eventId', async (req, res) => {
 });
 
 // PUT /api/bids/:bidId/accept - Organizer accepts a winning bid
-router.put('/:bidId/accept', async (req, res) => {
+router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (req, res) => {
     const { bidId } = req.params;
-    const { organizer_id } = req.body;
-
-    if (!organizer_id) {
-        return res.status(400).json({ error: 'organizer_id is required.' });
-    }
+    const organizer_id = req.user.user_id; // Securely derive identity from token
 
     const client = await pool.connect();
     try {
