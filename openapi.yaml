@@ -64,6 +64,34 @@ paths:
                 items:
                   $ref: "#/components/schemas/Event"
 
+  /events/{eventId}/generate-plan:
+    post:
+      summary: Bridge to AI Microservice to generate infrastructure plan for an event
+      tags:
+        - Events
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: AI Plan generated successfully and event status updated to open
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  event:
+                    $ref: "#/components/schemas/Event"
+        "404":
+          description: Event not found
+        "500":
+          description: Server error
+
   # ---------------- BIDDING ROUTES ---------------- #
   /bids:
     post:
