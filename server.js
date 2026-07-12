@@ -1,6 +1,7 @@
 // server.js
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
@@ -15,12 +16,17 @@ const port = process.env.PORT || 5000;
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: "*", // allow all origins for the hackathon
-        methods: ["GET", "POST", "PUT", "DELETE"]
+        origin: (origin, callback) => {
+            callback(null, origin || true);
+        },
+        methods: ["GET", "POST", "PUT", "DELETE"],
+        credentials: true
     }
 });
+
 // Make io accessible to our routers
 app.set('io', io);
+
 // Log when a client connects
 io.on('connection', (socket) => {
     console.log(`⚡ Socket: Client connected [id: ${socket.id}]`);
@@ -30,8 +36,15 @@ io.on('connection', (socket) => {
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: (origin, callback) => {
+        // Dynamically echo the origin to satisfy credentialed request rules
+        callback(null, origin || true);
+    },
+    credentials: true
+}));
 app.use(express.json()); // Parses incoming JSON requests
+app.use(cookieParser()); // Parses Cookie headers and populates req.cookies
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // Basic Health Check Route
@@ -52,6 +65,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/bids', bidRoutes);
 app.use('/api/inventory', inventoryRoutes);
 
-app.listen(port, () => {
+// Start server on server.listen (supports both HTTP & WebSockets)
+server.listen(port, () => {
     console.log(`📡 Server is running on port: ${port}`);
 });

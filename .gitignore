@@ -1,6 +1,9 @@
 # Dependency directories
 node_modules/
 
+#personal documents
+document/
+
 # Environment variables
 .env
 
