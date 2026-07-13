@@ -6,7 +6,7 @@ const { authenticateUser, requireRole } = require('../middleware/auth');
 
 // POST /api/events - Organizer submits a new event
 router.post('/', authenticateUser, requireRole('organizer'), async (req, res) => {
-    const { event_type, crowd_count, venue_size_sqm, budget_range } = req.body;
+    const { event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description } = req.body;
     const organizer_id = req.user.user_id; // Securely derive from token, preventing spoofing
 
     if (!event_type || !crowd_count) {
@@ -14,12 +14,19 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
     }
 
     try {
+        // Safe integer conversion to prevent database exceptions on floats
+        const crowd = Math.round(Number(crowd_count)) || 0;
+        const venue_size = venue_size_sqm ? Math.round(Number(venue_size_sqm)) : null;
+
         // Note: The ai_infrastructure_plan is left null here. 
         // We will update it later when the Python microservice returns the AI data.
+        const req_json = requirements ? JSON.stringify(requirements) : JSON.stringify(["Audio", "Lighting", "Staging"]);
+        const env = environment || 'Indoor';
+        
         const result = await pool.query(
-            `INSERT INTO events (organizer_id, event_type, crowd_count, venue_size_sqm, budget_range) 
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [organizer_id, event_type, crowd_count, venue_size_sqm, budget_range]
+            `INSERT INTO events (organizer_id, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+            [organizer_id, event_type, crowd, venue_size, budget_range, env, req_json, description || '']
         );
         res.status(201).json({
             message: 'Event created, awaiting AI plan',
@@ -79,7 +86,10 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
                 event_type: eventDetails.event_type,
                 crowd_count: eventDetails.crowd_count,
                 venue_size_sqm: eventDetails.venue_size_sqm,
-                budget_range: eventDetails.budget_range
+                budget_range: eventDetails.budget_range,
+                environment: eventDetails.environment,
+                requirements: eventDetails.requirements,
+                description: eventDetails.description
             })
         });
 
@@ -92,17 +102,18 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
         // Ensure we're pulling the plan correctly depending on your Flask app's response structure
         const equipmentPlan = aiData.equipment_plan || aiData;
 
-        // 4. Update the database with the generated plan
+        // 4. Update the database with the generated dual-plan options, but keep status as draft
         const updateResult = await pool.query(
             `UPDATE events 
-             SET ai_infrastructure_plan = $1, status = 'bidding_open' 
+             SET ai_infrastructure_plan = $1, status = 'draft' 
              WHERE event_id = $2 RETURNING *`,
-            [JSON.stringify(equipmentPlan), eventId]
+            [JSON.stringify(aiData), eventId]
         );
 
         res.status(200).json({
-            message: 'AI Plan generated successfully. Event is now open for bidding!',
-            event: updateResult.rows[0]
+            message: 'AI Plan generated successfully. Awaiting option selection.',
+            event: updateResult.rows[0],
+            options: aiData
         });
 
     } catch (err) {
@@ -123,6 +134,50 @@ router.get('/:eventId', authenticateUser, async (req, res) => {
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error fetching event details.' });
+    }
+});
+
+// GET /api/events - Retrieve all events owned by the logged-in organizer
+router.get('/', authenticateUser, requireRole('organizer'), async (req, res) => {
+    const organizer_id = req.user.user_id;
+    try {
+        const result = await pool.query(
+            "SELECT * FROM events WHERE organizer_id = $1 ORDER BY created_at DESC",
+            [organizer_id]
+        );
+        res.status(200).json(result.rows);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error fetching organizer events.' });
+    }
+});
+
+// PUT /api/events/:eventId/finalize-plan - Finalize the selected AI plan
+router.put('/:eventId/finalize-plan', authenticateUser, requireRole('organizer'), async (req, res) => {
+    const { eventId } = req.params;
+    const { selected_plan } = req.body;
+    const organizer_id = req.user.user_id;
+
+    if (!selected_plan) {
+        return res.status(400).json({ error: 'selected_plan is required.' });
+    }
+
+    try {
+        // Update the event's ai_infrastructure_plan with the finalized version and set to open
+        const result = await pool.query(
+            `UPDATE events SET ai_infrastructure_plan = $1, status = 'bidding_open' 
+             WHERE event_id = $2 AND organizer_id = $3 RETURNING *`,
+            [JSON.stringify(selected_plan), eventId, organizer_id]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Event not found or unauthorized.' });
+        }
+
+        res.status(200).json({ message: 'Plan finalized successfully.', event: result.rows[0] });
+    } catch (err) {
+        console.error('Finalize Plan Error:', err.message);
+        res.status(500).json({ error: 'Server error while finalizing plan.' });
     }
 });
 
