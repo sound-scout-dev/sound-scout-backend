@@ -6,7 +6,7 @@ const { authenticateUser, requireRole } = require('../middleware/auth');
 
 // POST /api/events - Organizer submits a new event
 router.post('/', authenticateUser, requireRole('organizer'), async (req, res) => {
-    const { event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description } = req.body;
+    const { event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location } = req.body;
     const organizer_id = req.user.user_id; // Securely derive from token, preventing spoofing
 
     if (!event_type || !crowd_count) {
@@ -24,9 +24,9 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
         const env = environment || 'Indoor';
         
         const result = await pool.query(
-            `INSERT INTO events (organizer_id, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-            [organizer_id, event_type, crowd, venue_size, budget_range, env, req_json, description || '']
+            `INSERT INTO events (organizer_id, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+            [organizer_id, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '']
         );
         res.status(201).json({
             message: 'Event created, awaiting AI plan',
@@ -41,9 +41,24 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
 // GET /api/events/open - Vendor dashboard fetches available jobs
 router.get('/open', authenticateUser, requireRole('vendor'), async (req, res) => {
     try {
-        const result = await pool.query(
-            "SELECT * FROM events WHERE status = 'bidding_open' ORDER BY created_at DESC"
+        // Retrieve the vendor's working region/district
+        const vendorRes = await pool.query(
+            "SELECT region FROM users WHERE user_id = $1",
+            [req.user.user_id]
         );
+        const region = vendorRes.rows[0]?.region;
+
+        let queryStr = "SELECT * FROM events WHERE status = 'bidding_open'";
+        let queryParams = [];
+
+        if (region) {
+            queryStr += " AND (location ILIKE $1 OR environment ILIKE $1)";
+            queryParams.push(`%${region}%`);
+        }
+
+        queryStr += " ORDER BY created_at DESC";
+
+        const result = await pool.query(queryStr, queryParams);
         res.status(200).json(result.rows);
     } catch (err) {
         console.error(err.message);
@@ -89,7 +104,8 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
                 budget_range: eventDetails.budget_range,
                 environment: eventDetails.environment,
                 requirements: eventDetails.requirements,
-                description: eventDetails.description
+                description: eventDetails.description,
+                location: eventDetails.location
             })
         });
 
