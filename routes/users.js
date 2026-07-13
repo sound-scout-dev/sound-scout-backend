@@ -270,4 +270,43 @@ router.post('/logout', async (req, res) => {
     }
 });
 
+// PUT /api/users/profile - Update user profile details
+router.put('/profile', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    let token = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
+    } else if (req.cookies && req.cookies.accessToken) {
+        token = req.cookies.accessToken;
+    }
+
+    if (!token) {
+        return res.status(401).json({ error: 'Unauthorized.' });
+    }
+
+    try {
+        const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
+        const { name, email, region } = req.body;
+
+        if (!name || !email) {
+            return res.status(400).json({ error: 'Name and email are required.' });
+        }
+
+        const result = await pool.query(
+            `UPDATE users SET name = $1, email = $2, region = $3 
+             WHERE user_id = $4 RETURNING user_id, name, email, role, region`,
+            [name, email, region, decoded.user_id]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+
+        res.status(200).json(result.rows[0]);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error updating profile.' });
+    }
+});
+
 module.exports = router;
