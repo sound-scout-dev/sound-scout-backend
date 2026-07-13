@@ -31,6 +31,47 @@ paths:
         "500":
           description: Server error
 
+  /users/login:
+    post:
+      summary: Log in an existing user
+      tags:
+        - Users
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  user:
+                    $ref: "#/components/schemas/User"
+                  accessToken:
+                    type: string
+                  refreshToken:
+                    type: string
+        "401":
+          description: Invalid credentials
+        "500":
+          description: Server error
+
   # ---------------- EVENT ROUTES (TRACK 1) ---------------- #
   /events:
     post:
@@ -63,6 +104,29 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Event"
+
+  /events/{eventId}:
+    get:
+      summary: Fetch details of a specific event
+      tags:
+        - Events
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Event details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "404":
+          description: Event not found
+        "500":
+          description: Server error
 
   /events/{eventId}/generate-plan:
     post:
@@ -176,6 +240,7 @@ components:
         - name
         - email
         - role
+        - password
       properties:
         name:
           type: string
@@ -185,6 +250,8 @@ components:
         role:
           type: string
           enum: [organizer, vendor]
+        password:
+          type: string
         region:
           type: string
           description: Required for vendors to map Track 2 locations
@@ -251,3 +318,5 @@ components:
         proposed_price:
           type: number
           format: float
+        notes:
+          type: string

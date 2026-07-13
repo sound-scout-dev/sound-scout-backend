@@ -44,6 +44,10 @@ app.use(cors({
     credentials: true
 }));
 app.use(express.json()); // Parses incoming JSON requests
+app.use((req, res, next) => {
+    console.log(`[${new Date().toLocaleTimeString()}] 🚀 ${req.method} ${req.originalUrl || req.url}`);
+    next();
+});
 app.use(cookieParser()); // Parses Cookie headers and populates req.cookies
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 

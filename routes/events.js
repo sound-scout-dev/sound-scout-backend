@@ -111,4 +111,19 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
     }
 });
 
+// GET /api/events/:eventId - Fetch details of a specific event
+router.get('/:eventId', authenticateUser, async (req, res) => {
+    const { eventId } = req.params;
+    try {
+        const result = await pool.query('SELECT * FROM events WHERE event_id = $1', [eventId]);
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Event not found.' });
+        }
+        res.status(200).json(result.rows[0]);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error fetching event details.' });
+    }
+});
+
 module.exports = router;
