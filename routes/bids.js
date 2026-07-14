@@ -78,9 +78,9 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
     try {
         await client.query('BEGIN');
 
-        // Lock the bid row and derive event_id server-side (avoid trusting client input)
+        // Lock the bid row and derive event_id and bid_categories server-side
         const bidResult = await client.query(
-            'SELECT event_id FROM bids WHERE bid_id = $1 FOR UPDATE',
+            'SELECT event_id, bid_categories FROM bids WHERE bid_id = $1 FOR UPDATE',
             [bidId]
         );
 
@@ -90,6 +90,8 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
         }
 
         const eventId = bidResult.rows[0].event_id;
+        const acceptedCategories = bidResult.rows[0].bid_categories || [];
+
         const eventResult = await client.query(
             'SELECT organizer_id FROM events WHERE event_id = $1 FOR UPDATE',
             [eventId]
@@ -105,9 +107,40 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
             return res.status(403).json({ error: 'Unauthorized to accept bids for this event.' });
         }
 
+        // 1. Accept the target bid
         await client.query("UPDATE bids SET status = 'accepted' WHERE bid_id = $1", [bidId]);
-        await client.query("UPDATE bids SET status = 'rejected' WHERE event_id = $1 AND bid_id != $2", [eventId, bidId]);
-        await client.query("UPDATE events SET status = 'closed' WHERE event_id = $1", [eventId]);
+
+        // 2. Reject ONLY other pending bids that overlap with the accepted categories
+        if (acceptedCategories.length > 0) {
+            await client.query(`
+                UPDATE bids 
+                SET status = 'rejected' 
+                WHERE event_id = $1 AND bid_id != $2 AND status = 'pending' 
+                AND EXISTS (
+                    SELECT 1 FROM jsonb_array_elements_text(bid_categories) cat 
+                    WHERE cat = ANY($3::text[])
+                )
+            `, [eventId, bidId, acceptedCategories]);
+        }
+
+        // 3. Check if all required categories are now fulfilled
+        const eventPlanResult = await client.query('SELECT ai_infrastructure_plan FROM events WHERE event_id = $1', [eventId]);
+        const eventPlan = eventPlanResult.rows[0]?.ai_infrastructure_plan || {};
+        const requiredCategories = (eventPlan.categories || []).map(c => c.name);
+
+        const acceptedBidsResult = await client.query("SELECT bid_categories FROM bids WHERE event_id = $1 AND status = 'accepted'", [eventId]);
+        const fulfilledCategories = new Set();
+        for (const row of acceptedBidsResult.rows) {
+            for (const cat of (row.bid_categories || [])) {
+                fulfilledCategories.add(cat);
+            }
+        }
+
+        const isFullyBooked = requiredCategories.every(cat => fulfilledCategories.has(cat));
+        
+        if (isFullyBooked) {
+            await client.query("UPDATE events SET status = 'closed' WHERE event_id = $1", [eventId]);
+        }
 
         await client.query('COMMIT');
         res.status(200).json({ message: 'Bid accepted and event closed!' });
@@ -117,6 +150,26 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
         res.status(500).json({ error: 'Server error accepting bid.' });
     } finally {
         client.release();
+    }
+});
+
+// GET /api/bids/vendor - Vendor views their own placed bids
+router.get('/vendor', authenticateUser, requireRole('vendor'), async (req, res) => {
+    const vendor_id = req.user.user_id;
+
+    try {
+        const result = await pool.query(
+            `SELECT b.bid_id, b.event_id, b.proposed_price, b.notes, b.status, b.bid_categories, e.event_type, e.location 
+             FROM bids b 
+             JOIN events e ON b.event_id = e.event_id 
+             WHERE b.vendor_id = $1 
+             ORDER BY b.created_at DESC`,
+            [vendor_id]
+        );
+        res.status(200).json(result.rows);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error fetching vendor bids.' });
     }
 });
 

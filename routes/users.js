@@ -31,7 +31,47 @@ router.post('/register', async (req, res) => {
              VALUES ($1, $2, $3, $4, $5) RETURNING user_id, name, email, role, region`,
             [name, email, role, region, passwordHash]
         );
-        res.status(201).json(result.rows[0]);
+        const user = result.rows[0];
+
+        const accessToken = jwt.sign(
+            { user_id: user.user_id, email: user.email, role: user.role },
+            ACCESS_TOKEN_SECRET,
+            { expiresIn: '15m' }
+        );
+        const refreshToken = jwt.sign(
+            { user_id: user.user_id },
+            REFRESH_TOKEN_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        const hashedRefreshToken = hashToken(refreshToken);
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); 
+
+        await pool.query(
+            'INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
+            [user.user_id, hashedRefreshToken, expiresAt]
+        );
+
+        res.cookie('refreshToken', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'Lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000
+        });
+
+        res.cookie('accessToken', accessToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'Lax',
+            maxAge: 15 * 60 * 1000
+        });
+
+        res.status(201).json({
+            message: 'Registration successful!',
+            user: user,
+            accessToken,
+            refreshToken
+        });
     } catch (err) {
         console.error(err.message);
         if (err.code === '23505') { // Unique constraint violation (e.g. duplicate email)
