@@ -52,14 +52,44 @@ router.get('/open', authenticateUser, requireRole('vendor'), async (req, res) =>
         let queryParams = [];
 
         if (region) {
-            queryStr += " AND (location ILIKE $1 OR environment ILIKE $1)";
-            queryParams.push(`%${region}%`);
+            const districts = region.split(',').map(d => d.trim()).filter(Boolean);
+            if (districts.length > 0) {
+                const placeholders = districts.map((_, i) => `$${i + 1}`).join(', ');
+                queryStr += ` AND (district IN (${placeholders}) OR ${districts.map((_, i) => `location ILIKE $${districts.length + i + 1}`).join(' OR ')})`;
+                queryParams = [...districts, ...districts.map(d => `%${d}%`)];
+            }
         }
 
         queryStr += " ORDER BY created_at DESC";
 
         const result = await pool.query(queryStr, queryParams);
-        res.status(200).json(result.rows);
+        const events = result.rows;
+
+        // Fetch existing bids for these events
+        const eventIds = events.map(e => e.event_id);
+        let bidsMap = {};
+        if (eventIds.length > 0) {
+            const bidsRes = await pool.query(
+                `SELECT b.event_id, b.bid_id, b.proposed_price, b.notes, b.bid_categories, u.name AS vendor_name
+                 FROM bids b
+                 JOIN users u ON b.vendor_id = u.user_id
+                 WHERE b.event_id = ANY($1)`,
+                [eventIds]
+            );
+            bidsRes.rows.forEach(bid => {
+                if (!bidsMap[bid.event_id]) {
+                    bidsMap[bid.event_id] = [];
+                }
+                bidsMap[bid.event_id].push(bid);
+            });
+        }
+
+        const enrichedEvents = events.map(e => ({
+            ...e,
+            existing_bids: bidsMap[e.event_id] || []
+        }));
+
+        res.status(200).json(enrichedEvents);
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error fetching open events.' });
@@ -114,16 +144,17 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
         }
 
         const aiData = await aiResponse.json();
+        const resolvedDistrict = aiData.resolved_district || 'Colombo';
 
         // Ensure we're pulling the plan correctly depending on your Flask app's response structure
         const equipmentPlan = aiData.equipment_plan || aiData;
 
-        // 4. Update the database with the generated dual-plan options, but keep status as draft
+        // 4. Update the database with the generated dual-plan options, keep status as draft, and save resolved district
         const updateResult = await pool.query(
             `UPDATE events 
-             SET ai_infrastructure_plan = $1, status = 'draft' 
-             WHERE event_id = $2 RETURNING *`,
-            [JSON.stringify(aiData), eventId]
+             SET ai_infrastructure_plan = $1, district = $2, status = 'draft' 
+             WHERE event_id = $3 RETURNING *`,
+            [JSON.stringify(aiData), resolvedDistrict, eventId]
         );
 
         res.status(200).json({

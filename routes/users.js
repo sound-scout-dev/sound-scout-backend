@@ -286,17 +286,27 @@ router.put('/profile', async (req, res) => {
 
     try {
         const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
-        const { name, email, region } = req.body;
+        const { name, email, region, password } = req.body;
 
         if (!name || !email) {
             return res.status(400).json({ error: 'Name and email are required.' });
         }
 
-        const result = await pool.query(
-            `UPDATE users SET name = $1, email = $2, region = $3 
-             WHERE user_id = $4 RETURNING user_id, name, email, role, region`,
-            [name, email, region, decoded.user_id]
-        );
+        let result;
+        if (password && password.trim() !== '') {
+            const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+            result = await pool.query(
+                `UPDATE users SET name = $1, email = $2, region = $3, password_hash = $4 
+                 WHERE user_id = $5 RETURNING user_id, name, email, role, region`,
+                [name, email, region, passwordHash, decoded.user_id]
+            );
+        } else {
+            result = await pool.query(
+                `UPDATE users SET name = $1, email = $2, region = $3 
+                 WHERE user_id = $4 RETURNING user_id, name, email, role, region`,
+                [name, email, region, decoded.user_id]
+            );
+        }
 
         if (result.rowCount === 0) {
             return res.status(404).json({ error: 'User not found.' });

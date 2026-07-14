@@ -6,7 +6,7 @@ const { authenticateUser, requireRole } = require('../middleware/auth');
 
 // POST /api/bids - Vendor submits a bid for an event
 router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
-    const { event_id, proposed_price, notes } = req.body;
+    const { event_id, proposed_price, notes, bid_categories } = req.body;
     const vendor_id = req.user.user_id; // Securely derive vendor identity
 
     if (!event_id || proposed_price === undefined) {
@@ -19,10 +19,11 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
     }
 
     try {
+        const categoriesJson = bid_categories ? JSON.stringify(bid_categories) : null;
         const result = await pool.query(
-            `INSERT INTO bids (event_id, vendor_id, proposed_price, notes) 
-             VALUES ($1, $2, $3, $4) RETURNING *`,
-            [event_id, vendor_id, price, notes]
+            `INSERT INTO bids (event_id, vendor_id, proposed_price, notes, bid_categories) 
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [event_id, vendor_id, price, notes, categoriesJson]
         );
 
         const newBid = result.rows[0];
@@ -54,7 +55,7 @@ router.get('/event/:eventId', authenticateUser, requireRole('organizer'), async 
         }
 
         const result = await pool.query(
-            `SELECT b.bid_id, b.proposed_price, b.status, b.created_at, b.notes, u.name AS vendor_name 
+            `SELECT b.bid_id, b.proposed_price, b.status, b.created_at, b.notes, b.bid_categories, u.name AS vendor_name 
              FROM bids b 
              JOIN users u ON b.vendor_id = u.user_id 
              WHERE b.event_id = $1 
