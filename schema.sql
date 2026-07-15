@@ -44,5 +44,6 @@ CREATE TABLE IF NOT EXISTS bids (
     notes TEXT,
     bid_categories JSONB,
     status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (event_id, vendor_id)
 );
