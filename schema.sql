@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 CREATE TABLE IF NOT EXISTS events (
     event_id SERIAL PRIMARY KEY,
     organizer_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name VARCHAR(255),
     event_type VARCHAR(255) NOT NULL,
     crowd_count INTEGER NOT NULL,
     venue_size_sqm INTEGER,

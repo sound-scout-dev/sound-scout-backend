@@ -6,7 +6,7 @@ const { authenticateUser, requireRole } = require('../middleware/auth');
 
 // POST /api/events - Organizer submits a new event
 router.post('/', authenticateUser, requireRole('organizer'), async (req, res) => {
-    const { event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location } = req.body;
+    const { name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location } = req.body;
     const organizer_id = req.user.user_id; // Securely derive from token, preventing spoofing
 
     if (!event_type || !crowd_count) {
@@ -18,15 +18,15 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
         const crowd = Math.round(Number(crowd_count)) || 0;
         const venue_size = venue_size_sqm ? Math.round(Number(venue_size_sqm)) : null;
 
-        // Note: The ai_infrastructure_plan is left null here. 
+        // Note: The ai_infrastructure_plan is left null here.
         // We will update it later when the Python microservice returns the AI data.
         const req_json = requirements ? JSON.stringify(requirements) : JSON.stringify(["Audio", "Lighting", "Staging"]);
         const env = environment || 'Indoor';
-        
+
         const result = await pool.query(
-            `INSERT INTO events (organizer_id, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-            [organizer_id, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '']
+            `INSERT INTO events (organizer_id, name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+            [organizer_id, name || null, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '']
         );
         res.status(201).json({
             message: 'Event created, awaiting AI plan',
