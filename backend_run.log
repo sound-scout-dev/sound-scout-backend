@@ -1,0 +1,9 @@
+◇ injected env (7) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+📡 Server is running on port: 5000
+[3:12:14 PM] 🚀 GET /api/health
+[3:14:04 PM] 🚀 POST /api/users/login
+🔗 Connected to the PostgreSQL database.
+[3:14:04 PM] 🚀 GET /api/events
+[3:14:04 PM] 🚀 GET /api/events
