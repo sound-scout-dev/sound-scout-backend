@@ -1,49 +1,5 @@
-◇ injected env (7) from .env // tip: ⌘ enable debugging { debug: true }
-◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
-◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+◇ injected env (12) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
 📡 Server is running on port: 5000
-[8:10:19 PM] 🚀 POST /api/users/register
-🔗 Connected to the PostgreSQL database.
-[8:10:19 PM] 🚀 POST /api/users/register
-[8:10:20 PM] 🚀 POST /api/users/register
-[8:10:20 PM] 🚀 POST /api/events
-[8:10:20 PM] 🚀 POST /api/events
-[8:10:20 PM] 🚀 POST /api/events
-[8:10:20 PM] 🚀 PUT /api/events/20/finalize-plan
-[8:10:21 PM] 🚀 PUT /api/events/21/finalize-plan
-[8:10:21 PM] 🚀 POST /api/bids
-[8:10:21 PM] 🚀 POST /api/bids
-[8:10:21 PM] 🚀 PUT /api/bids/19/accept
-[8:10:21 PM] 🚀 PUT /api/bids/20/accept
-[8:10:21 PM] 🚀 POST /api/ratings
-[8:10:21 PM] 🚀 POST /api/ratings
-[8:10:21 PM] 🚀 GET /api/ratings/pending
-[8:25:22 PM] 🚀 POST /api/users/register
-🔗 Connected to the PostgreSQL database.
-[8:25:22 PM] 🚀 POST /api/users/register
-[8:25:22 PM] 🚀 POST /api/events
-[8:25:23 PM] 🚀 PUT /api/events/22/finalize-plan
-[8:25:23 PM] 🚀 POST /api/bids
-[8:25:23 PM] 🚀 PUT /api/bids/21/accept
-[8:25:23 PM] 🚀 GET /api/ratings/pending
-[8:25:52 PM] 🚀 GET /api/ratings/pending
-[8:25:52 PM] 🚀 GET /api/events
-[8:25:52 PM] 🚀 GET /api/ratings/pending
-[8:25:52 PM] 🚀 GET /api/events
-[8:25:54 PM] 🚀 GET /api/ratings/pending
-[8:25:54 PM] 🚀 GET /api/events
-[8:25:54 PM] 🚀 GET /api/ratings/pending
-[8:25:54 PM] 🚀 GET /api/events
-[8:25:55 PM] 🚀 GET /api/ratings/pending
-[8:25:55 PM] 🚀 GET /api/events
-[8:25:55 PM] 🚀 GET /api/ratings/pending
-[8:25:55 PM] 🚀 GET /api/events
-[8:28:32 PM] 🚀 POST /api/users/login
-🔗 Connected to the PostgreSQL database.
-[8:28:33 PM] 🚀 GET /api/events
-[8:28:33 PM] 🚀 GET /api/ratings/pending
-[8:28:33 PM] 🚀 GET /api/events
-🔗 Connected to the PostgreSQL database.
-[8:28:33 PM] 🚀 GET /api/ratings/pending
-[8:29:52 PM] 🚀 POST /api/ratings
-🔗 Connected to the PostgreSQL database.
+[9:16:59 PM] 🚀 GET /api/health
