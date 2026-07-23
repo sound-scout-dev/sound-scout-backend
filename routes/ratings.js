@@ -20,12 +20,18 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
 
     try {
         // Verify the event belongs to this organizer
-        const eventCheck = await pool.query('SELECT organizer_id FROM events WHERE event_id = $1', [event_id]);
+        const eventCheck = await pool.query('SELECT organizer_id, event_date FROM events WHERE event_id = $1', [event_id]);
         if (eventCheck.rowCount === 0) {
             return res.status(404).json({ error: 'Event not found.' });
         }
         if (eventCheck.rows[0].organizer_id !== organizer_id) {
             return res.status(403).json({ error: 'Access forbidden. You do not own this event.' });
+        }
+
+        // Ratings only make sense once the event has actually happened
+        const eventDate = eventCheck.rows[0].event_date;
+        if (!eventDate || new Date(eventDate) > new Date()) {
+            return res.status(403).json({ error: 'You can only rate a vendor after the event has taken place.' });
         }
 
         // Only allow rating a vendor the organizer actually accepted a bid from on this event
@@ -51,6 +57,33 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error while submitting rating.' });
+    }
+});
+
+// GET /api/ratings/pending - Organizer's accepted vendors from past events that aren't rated yet
+router.get('/pending', authenticateUser, requireRole('organizer'), async (req, res) => {
+    const organizer_id = req.user.user_id;
+
+    try {
+        const result = await pool.query(
+            `SELECT e.event_id, e.event_type, e.event_date, b.bid_id, b.proposed_price, u.user_id AS vendor_id, u.name AS vendor_name
+             FROM bids b
+             JOIN events e ON b.event_id = e.event_id
+             JOIN users u ON b.vendor_id = u.user_id
+             WHERE e.organizer_id = $1
+               AND b.status = 'accepted'
+               AND e.event_date IS NOT NULL
+               AND e.event_date <= CURRENT_DATE
+               AND NOT EXISTS (
+                   SELECT 1 FROM vendor_ratings r WHERE r.event_id = e.event_id AND r.vendor_id = b.vendor_id
+               )
+             ORDER BY e.event_date DESC`,
+            [organizer_id]
+        );
+        res.status(200).json(result.rows);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error fetching pending ratings.' });
     }
 });
 

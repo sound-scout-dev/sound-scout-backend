@@ -69,11 +69,19 @@ router.get('/event/:eventId', authenticateUser, requireRole('organizer'), async 
         }
 
         const result = await pool.query(
-            `SELECT b.bid_id, b.proposed_price, b.status, b.created_at, b.notes, b.bid_categories, u.name AS vendor_name 
-             FROM bids b 
-             JOIN users u ON b.vendor_id = u.user_id 
-             WHERE b.event_id = $1 
-             ORDER BY b.proposed_price ASC`,
+            `SELECT b.bid_id, b.proposed_price, b.status, b.created_at, b.notes, b.bid_categories,
+                    u.user_id AS vendor_id, u.name AS vendor_name,
+                    COALESCE(r.avg_rating, 0) AS vendor_rating,
+                    COALESCE(r.rating_count, 0) AS vendor_rating_count
+             FROM bids b
+             JOIN users u ON b.vendor_id = u.user_id
+             LEFT JOIN (
+                 SELECT vendor_id, AVG(rating)::numeric(10,2) AS avg_rating, COUNT(*)::int AS rating_count
+                 FROM vendor_ratings
+                 GROUP BY vendor_id
+             ) r ON r.vendor_id = u.user_id
+             WHERE b.event_id = $1
+             ORDER BY COALESCE(r.avg_rating, 0) DESC, b.proposed_price ASC`,
             [eventId]
         );
         res.status(200).json(result.rows);

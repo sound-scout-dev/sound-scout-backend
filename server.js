@@ -62,12 +62,14 @@ const userRoutes = require('./routes/users');
 const eventRoutes = require('./routes/events');
 const bidRoutes = require('./routes/bids');
 const inventoryRoutes = require('./routes/inventory');
+const ratingRoutes = require('./routes/ratings');
 
 // Use Routes
 app.use('/api/users', userRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/bids', bidRoutes);
 app.use('/api/inventory', inventoryRoutes);
+app.use('/api/ratings', ratingRoutes);
 
 // Start server on server.listen (supports both HTTP & WebSockets)
 server.listen(port, () => {
