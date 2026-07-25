@@ -1,5 +1,81 @@
-◇ injected env (12) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (12) from .env // tip: ⌁ auth for agents [www.vestauth.com]
 ◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
-◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
 📡 Server is running on port: 5000
-[9:16:59 PM] 🚀 GET /api/health
+[9:29:00 PM] 🚀 GET /api/events/open
+[9:29:00 PM] 🚀 GET /api/bids/vendor
+[9:29:00 PM] 🚀 GET /api/events/open
+[9:29:00 PM] 🚀 GET /api/bids/vendor
+[9:29:04 PM] 🚀 GET /api/events/open
+[9:29:04 PM] 🚀 GET /api/bids/vendor
+[9:29:04 PM] 🚀 GET /api/events/open
+[9:29:04 PM] 🚀 GET /api/bids/vendor
+[9:29:05 PM] 🚀 GET /api/events/open
+[9:29:05 PM] 🚀 GET /api/bids/vendor
+[9:29:05 PM] 🚀 GET /api/events/open
+[9:29:05 PM] 🚀 GET /api/bids/vendor
+[9:29:05 PM] 🚀 GET /api/events/open
+[9:29:05 PM] 🚀 GET /api/bids/vendor
+[9:29:05 PM] 🚀 GET /api/events/open
+[9:29:05 PM] 🚀 GET /api/bids/vendor
+[9:29:28 PM] 🚀 POST /api/users/login
+🔗 Connected to the PostgreSQL database.
+[9:29:28 PM] 🚀 GET /api/events
+[9:29:28 PM] 🚀 GET /api/ratings/pending
+[9:29:28 PM] 🚀 GET /api/events
+🔗 Connected to the PostgreSQL database.
+[9:29:28 PM] 🚀 GET /api/ratings/pending
+[9:29:31 PM] 🚀 GET /api/events/evt-3
+[9:29:31 PM] 🚀 GET /api/bids/event/evt-3
+invalid input syntax for type integer: "evt-3"
+invalid input syntax for type integer: "evt-3"
+[9:29:31 PM] 🚀 GET /api/events/evt-3
+[9:29:31 PM] 🚀 GET /api/bids/event/evt-3
+🔗 Connected to the PostgreSQL database.
+🔗 Connected to the PostgreSQL database.
+invalid input syntax for type integer: "evt-3"
+invalid input syntax for type integer: "evt-3"
+[9:29:35 PM] 🚀 GET /api/events
+[9:29:35 PM] 🚀 GET /api/ratings/pending
+🔗 Connected to the PostgreSQL database.
+🔗 Connected to the PostgreSQL database.
+[9:29:35 PM] 🚀 GET /api/events
+[9:29:35 PM] 🚀 GET /api/ratings/pending
+[9:29:36 PM] 🚀 GET /api/events/evt-2
+[9:29:36 PM] 🚀 GET /api/bids/event/evt-2
+invalid input syntax for type integer: "evt-2"
+invalid input syntax for type integer: "evt-2"
+[9:29:36 PM] 🚀 GET /api/events/evt-2
+[9:29:36 PM] 🚀 GET /api/bids/event/evt-2
+🔗 Connected to the PostgreSQL database.
+🔗 Connected to the PostgreSQL database.
+invalid input syntax for type integer: "evt-2"
+invalid input syntax for type integer: "evt-2"
+[9:29:36 PM] 🚀 GET /api/payments/bid/bid-4
+🔗 Connected to the PostgreSQL database.
+invalid input syntax for type integer: "bid-4"
+[9:29:49 PM] 🚀 GET /api/events
+[9:29:49 PM] 🚀 GET /api/ratings/pending
+🔗 Connected to the PostgreSQL database.
+🔗 Connected to the PostgreSQL database.
+[9:29:49 PM] 🚀 GET /api/events
+[9:29:49 PM] 🚀 GET /api/ratings/pending
+[9:30:00 PM] 🚀 GET /api/events/evt-1783834979832
+[9:30:00 PM] 🚀 GET /api/bids/event/evt-1783834979832
+🔗 Connected to the PostgreSQL database.
+invalid input syntax for type integer: "evt-1783834979832"
+🔗 Connected to the PostgreSQL database.
+[9:30:00 PM] 🚀 GET /api/events/evt-1783834979832
+invalid input syntax for type integer: "evt-1783834979832"
+[9:30:00 PM] 🚀 GET /api/bids/event/evt-1783834979832
+🔗 Connected to the PostgreSQL database.
+🔗 Connected to the PostgreSQL database.
+invalid input syntax for type integer: "evt-1783834979832"
+invalid input syntax for type integer: "evt-1783834979832"
+[9:30:32 PM] 🚀 POST /api/users/login
+🔗 Connected to the PostgreSQL database.
+[9:30:32 PM] 🚀 GET /api/events/open
+[9:30:32 PM] 🚀 GET /api/bids/vendor
+[9:30:32 PM] 🚀 GET /api/events/open
+🔗 Connected to the PostgreSQL database.
+[9:30:32 PM] 🚀 GET /api/bids/vendor
