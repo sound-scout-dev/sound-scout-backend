@@ -19,9 +19,20 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
     }
 
     try {
+        // A vendor may only place one bid per event — they choose which
+        // categories that single bid covers, leaving the rest open for other
+        // vendors to bid on.
+        const existingBid = await pool.query(
+            'SELECT bid_id FROM bids WHERE event_id = $1 AND vendor_id = $2',
+            [event_id, vendor_id]
+        );
+        if (existingBid.rowCount > 0) {
+            return res.status(409).json({ error: 'You have already placed a bid on this event.' });
+        }
+
         const categoriesJson = bid_categories ? JSON.stringify(bid_categories) : null;
         const result = await pool.query(
-            `INSERT INTO bids (event_id, vendor_id, proposed_price, notes, bid_categories) 
+            `INSERT INTO bids (event_id, vendor_id, proposed_price, notes, bid_categories)
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
             [event_id, vendor_id, price, notes, categoriesJson]
         );
@@ -34,6 +45,9 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
 
         res.status(201).json({ message: 'Bid placed successfully!', bid: newBid });
     } catch (err) {
+        if (err.code === '23505') { // unique_violation (event_id, vendor_id) — race with the check above
+            return res.status(409).json({ error: 'You have already placed a bid on this event.' });
+        }
         console.error(err.message);
         res.status(500).json({ error: 'Server error while placing bid.' });
     }
