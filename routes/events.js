@@ -135,7 +135,8 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
                 environment: eventDetails.environment,
                 requirements: eventDetails.requirements,
                 description: eventDetails.description,
-                location: eventDetails.location
+                location: eventDetails.location,
+                venue_photo_analysis: req.body.venue_photo_analysis || null
             })
         });
 
