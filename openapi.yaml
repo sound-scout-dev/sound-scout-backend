@@ -188,6 +188,10 @@ paths:
       responses:
         "200":
           description: Plan finalized and event opened for bidding
+          content:
+            application/json:
+              schema:
+                type: object
                 properties:
                   message:
                     type: string
