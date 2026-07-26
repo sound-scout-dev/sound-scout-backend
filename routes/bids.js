@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const { authenticateUser, requireRole } = require('../middleware/auth');
+const { sendWhatsAppMessage } = require('../services/whatsappClient');
 
 // POST /api/bids - Vendor submits a bid for an event
 router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
@@ -69,7 +70,7 @@ router.get('/event/:eventId', authenticateUser, requireRole('organizer'), async 
         }
 
         const result = await pool.query(
-            `SELECT b.bid_id, b.proposed_price, b.status, b.created_at, b.notes, b.bid_categories, u.name AS vendor_name 
+            `SELECT b.bid_id, b.proposed_price, b.status, b.created_at, b.notes, b.bid_categories, u.name AS vendor_name, u.phone AS vendor_phone 
              FROM bids b 
              JOIN users u ON b.vendor_id = u.user_id 
              WHERE b.event_id = $1 
@@ -156,7 +157,29 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
             await client.query("UPDATE events SET status = 'closed' WHERE event_id = $1", [eventId]);
         }
 
+        // Fetch details for WhatsApp notification in the background
+        const detailsResult = await client.query(
+            `SELECT u.phone AS vendor_phone, u.name AS vendor_name, e.event_type, e.location, org.name AS organizer_name, org.phone AS organizer_phone, b.proposed_price 
+             FROM bids b 
+             JOIN users u ON b.vendor_id = u.user_id 
+             JOIN events e ON b.event_id = e.event_id 
+             JOIN users org ON e.organizer_id = org.user_id 
+             WHERE b.bid_id = $1`,
+            [bidId]
+        );
+
         await client.query('COMMIT');
+
+        if (detailsResult.rowCount > 0) {
+            const details = detailsResult.rows[0];
+            const { vendor_phone, vendor_name, event_type, location, organizer_name, organizer_phone, proposed_price } = details;
+            
+            if (vendor_phone) {
+                const message = `🎉 *SoundScout Bid Accepted!*\n\nDear *${vendor_name}*,\n\nWe are excited to inform you that your bid of *Rs. ${Number(proposed_price).toLocaleString()}* for the event *${event_type}* at *${location}* has been *ACCEPTED*!\n\nOrganizer details:\n👤 Name: *${organizer_name}*\n📞 Phone: *${organizer_phone || 'N/A'}*\n\nPlease log in to your SoundScout dashboard to coordinate further details.`;
+                sendWhatsAppMessage(vendor_phone, message).catch(err => console.error("Error sending accept bid WhatsApp:", err));
+            }
+        }
+
         res.status(200).json({ message: 'Bid accepted and event closed!' });
     } catch (err) {
         await client.query('ROLLBACK');
@@ -173,9 +196,10 @@ router.get('/vendor', authenticateUser, requireRole('vendor'), async (req, res) 
 
     try {
         const result = await pool.query(
-            `SELECT b.bid_id, b.event_id, b.proposed_price, b.notes, b.status, b.bid_categories, e.event_type, e.location 
+            `SELECT b.bid_id, b.event_id, b.proposed_price, b.notes, b.status, b.bid_categories, e.event_type, e.location, u.name AS organizer_name, u.phone AS organizer_phone 
              FROM bids b 
              JOIN events e ON b.event_id = e.event_id 
+             JOIN users u ON e.organizer_id = u.user_id 
              WHERE b.vendor_id = $1 
              ORDER BY b.created_at DESC`,
             [vendor_id]
