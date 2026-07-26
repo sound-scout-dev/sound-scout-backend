@@ -1,3 +1,14 @@
-2026/07/31-18:27:31.115 12c994 Reusing MANIFEST /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/07/31-18:27:31.115 12c994 Recovering log #69
-2026/07/31-18:27:31.138 12c994 Reusing old log /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/000069.log 
+2026/07/26-20:40:41.749 13fe14 Reusing MANIFEST /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/07/26-20:40:41.750 13fe14 Recovering log #69
+2026/07/26-20:40:41.795 13fe14 Reusing old log /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/000069.log 
+2026/07/26-20:40:42.655 13fe11 Level-0 table #75: started
+2026/07/26-20:40:42.672 13fe11 Level-0 table #75: 1181392 bytes OK
+2026/07/26-20:40:42.675 13fe11 Delete type=0 #69
+2026/07/26-20:40:43.236 13fe14 Compacting 1@1 + 2@2 files
+2026/07/26-20:40:43.278 13fe14 Generated table #76@1: 75019 keys, 2247799 bytes
+2026/07/26-20:40:43.312 13fe14 Generated table #77@1: 25208 keys, 1748901 bytes
+2026/07/26-20:40:43.312 13fe14 Compacted 1@1 + 2@2 files => 3996700 bytes
+2026/07/26-20:40:43.317 13fe14 compacted to: files[ 0 0 2 0 0 0 0 ]
+2026/07/26-20:40:43.317 13fe14 Delete type=2 #71
+2026/07/26-20:40:43.317 13fe14 Delete type=2 #72
+2026/07/26-20:40:43.317 13fe14 Delete type=2 #75
