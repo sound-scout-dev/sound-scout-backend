@@ -6,7 +6,7 @@ const { authenticateUser, requireRole } = require('../middleware/auth');
 
 // POST /api/events - Organizer submits a new event
 router.post('/', authenticateUser, requireRole('organizer'), async (req, res) => {
-    const { name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location } = req.body;
+    const { name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location, event_date } = req.body;
     const organizer_id = req.user.user_id; // Securely derive from token, preventing spoofing
 
     if (!event_type || !crowd_count) {
@@ -24,9 +24,9 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
         const env = environment || 'Indoor';
 
         const result = await pool.query(
-            `INSERT INTO events (organizer_id, name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-            [organizer_id, name || null, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '']
+            `INSERT INTO events (organizer_id, name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location, event_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+            [organizer_id, name || null, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '', event_date || null]
         );
         res.status(201).json({
             message: 'Event created, awaiting AI plan',

@@ -5,6 +5,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { sendWhatsAppMessage } = require('../services/whatsappClient');
+const { authenticateUser, requireRole } = require('../middleware/auth');
 
 const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'soundscout_access_secret_12345';
 const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || 'soundscout_refresh_secret_12345';
@@ -406,6 +407,29 @@ router.post('/verify-otp', async (req, res) => {
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error verifying OTP.' });
+    }
+});
+
+// POST /api/users/subscribe-premium - Turn vendor into premium status
+router.post('/subscribe-premium', authenticateUser, requireRole('vendor'), async (req, res) => {
+    const vendor_id = req.user.user_id;
+    try {
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+        await pool.query(
+            `UPDATE users 
+             SET is_premium = true, 
+                 subscription_expires_at = $1 
+             WHERE user_id = $2`,
+            [expiresAt, vendor_id]
+        );
+        res.status(200).json({ 
+            message: 'Successfully subscribed to Monthly Premium Plan!',
+            is_premium: true,
+            subscription_expires_at: expiresAt
+        });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error subscribing to premium.' });
     }
 });
 

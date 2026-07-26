@@ -7,7 +7,7 @@ const { sendWhatsAppMessage } = require('../services/whatsappClient');
 
 // POST /api/bids - Vendor submits a bid for an event
 router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
-    const { event_id, proposed_price, notes, bid_categories } = req.body;
+    const { event_id, proposed_price, notes, bid_categories, bid_items } = req.body;
     const vendor_id = req.user.user_id; // Securely derive vendor identity
 
     if (!event_id || proposed_price === undefined) {
@@ -32,10 +32,11 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
         }
 
         const categoriesJson = bid_categories ? JSON.stringify(bid_categories) : null;
+        const itemsJson = bid_items ? JSON.stringify(bid_items) : '[]';
         const result = await pool.query(
-            `INSERT INTO bids (event_id, vendor_id, proposed_price, notes, bid_categories)
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [event_id, vendor_id, price, notes, categoriesJson]
+            `INSERT INTO bids (event_id, vendor_id, proposed_price, notes, bid_categories, bid_items)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+            [event_id, vendor_id, price, notes, categoriesJson, itemsJson]
         );
 
         const newBid = result.rows[0];
@@ -70,12 +71,12 @@ router.get('/event/:eventId', authenticateUser, requireRole('organizer'), async 
         }
 
         const result = await pool.query(
-            `SELECT b.bid_id, b.proposed_price, b.status, b.created_at, b.notes, b.bid_categories, b.payment_status, u.name AS vendor_name,
+            `SELECT b.bid_id, b.vendor_id, b.proposed_price, b.status, b.created_at, b.notes, b.bid_categories, b.bid_items, b.payment_status, b.final_payment_status, u.name AS vendor_name, u.is_premium,
                     CASE WHEN b.status = 'accepted' AND b.payment_status = 'paid' THEN u.phone ELSE '' END AS vendor_phone 
              FROM bids b 
              JOIN users u ON b.vendor_id = u.user_id 
              WHERE b.event_id = $1 
-             ORDER BY b.proposed_price ASC`,
+             ORDER BY u.is_premium DESC, b.proposed_price ASC`,
             [eventId]
         );
         res.status(200).json(result.rows);
@@ -197,7 +198,7 @@ router.get('/vendor', authenticateUser, requireRole('vendor'), async (req, res) 
 
     try {
         const result = await pool.query(
-            `SELECT b.bid_id, b.event_id, b.proposed_price, b.notes, b.status, b.bid_categories, e.event_type, e.location, u.name AS organizer_name,
+            `SELECT b.bid_id, b.event_id, b.proposed_price, b.notes, b.status, b.bid_categories, b.payment_status, b.final_payment_status, e.event_type, e.location, u.name AS organizer_name,
                     CASE WHEN b.status = 'accepted' AND b.payment_status = 'paid' THEN u.phone ELSE '' END AS organizer_phone 
              FROM bids b 
              JOIN events e ON b.event_id = e.event_id 
@@ -242,9 +243,10 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
         const proposedPrice = Number(bidResult.rows[0].proposed_price);
         const acceptedCategories = bidResult.rows[0].bid_categories || [];
 
-        // Calculate 6% platform fee and deposit amount
+        // Calculate 6% platform fee, 50% deposit amount, and 50% final payout amount
         const platformFee = Number((proposedPrice * 0.06).toFixed(2));
-        const depositAmount = platformFee; // The deposit charged is equal to the platform fee in this escrow flow
+        const depositAmount = Number((proposedPrice * 0.50).toFixed(2)) + platformFee; 
+        const finalPayoutAmount = Number((proposedPrice * 0.50).toFixed(2));
 
         const eventResult = await client.query(
             'SELECT organizer_id FROM events WHERE event_id = $1 FOR UPDATE',
@@ -261,16 +263,18 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
             return res.status(403).json({ error: 'Unauthorized to accept bids for this event.' });
         }
 
-        // 1. Accept the target bid and set payment details
+        // 1. Accept the target bid and set payment details (deposit paid immediately, final payout unpaid)
         await client.query(
             `UPDATE bids 
              SET status = 'accepted', 
                  payment_status = 'paid', 
                  platform_fee = $1, 
                  deposit_amount = $2, 
-                 transaction_id = $3 
-             WHERE bid_id = $4`,
-            [platformFee, depositAmount, transactionId, bidId]
+                 final_payout_amount = $3,
+                 transaction_id = $4,
+                 final_payment_status = 'unpaid' 
+             WHERE bid_id = $5`,
+            [platformFee, depositAmount, finalPayoutAmount, transactionId, bidId]
         );
 
         // 2. Reject ONLY other pending bids that overlap with the accepted categories
@@ -323,7 +327,7 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
             const { vendor_phone, vendor_name, event_type, location, organizer_name, organizer_phone, proposed_price } = details;
             
             if (vendor_phone) {
-                const message = `🎉 *SoundScout Bid Accepted & Escrow Paid!*\n\nDear *${vendor_name}*,\n\nWe are excited to inform you that your bid of *Rs. ${Number(proposed_price).toLocaleString()}* for the event *${event_type}* at *${location}* has been *ACCEPTED* and the platform escrow deposit has been paid successfully!\n\nOrganizer details:\n👤 Name: *${organizer_name}*\n📞 Phone: *${organizer_phone || 'N/A'}*\n\nDirect contact details are now unlocked on your dashboard. Let's coordinate!`;
+                const message = `🎉 *SoundScout Bid Accepted & Escrow Deposit Paid!*\n\nDear *${vendor_name}*,\n\nWe are excited to inform you that your bid of *Rs. ${Number(proposed_price).toLocaleString()}* for the event *${event_type}* at *${location}* has been *ACCEPTED*!\n\nDeposit Paid: *Rs. ${Number(depositAmount).toLocaleString()}* (50% advance + 6% commission).\nOrganizer Details:\n👤 Name: *${organizer_name}*\n📞 Phone: *${organizer_phone || 'N/A'}*\n\nDirect contact details are now unlocked. Release of the final 50% payout occurs on the event day. Let's coordinate!`;
                 sendWhatsAppMessage(vendor_phone, message).catch(err => console.error("Error sending accept bid WhatsApp:", err));
             }
         }
@@ -335,6 +339,117 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
         res.status(500).json({ error: 'Server error during escrow payment and bid acceptance.' });
     } finally {
         client.release();
+    }
+});
+
+// PUT /api/bids/:bidId/final-payment - Organizer releases the remaining 50% payment
+router.put('/:bidId/final-payment', authenticateUser, requireRole('organizer'), async (req, res) => {
+    const { bidId } = req.params;
+    const { transactionId } = req.body;
+    const organizer_id = req.user.user_id;
+
+    if (!transactionId) {
+        return res.status(400).json({ error: 'transactionId is required.' });
+    }
+
+    try {
+        const bidResult = await pool.query(
+            `SELECT b.event_id, b.final_payout_amount, b.final_payment_status, e.organizer_id, e.event_type, u.name AS vendor_name, u.phone AS vendor_phone 
+             FROM bids b
+             JOIN events e ON b.event_id = e.event_id
+             JOIN users u ON b.vendor_id = u.user_id
+             WHERE b.bid_id = $1`,
+            [bidId]
+        );
+
+        if (bidResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Bid or payout details not found.' });
+        }
+
+        const bid = bidResult.rows[0];
+
+        if (String(bid.organizer_id) !== String(organizer_id)) {
+            return res.status(403).json({ error: 'Unauthorized to release payment for this bid.' });
+        }
+
+        if (bid.final_payment_status === 'paid') {
+            return res.status(400).json({ error: 'Final payment has already been released.' });
+        }
+
+        await pool.query(
+            `UPDATE bids 
+             SET final_payment_status = 'paid', 
+                 final_transaction_id = $1 
+             WHERE bid_id = $2`,
+            [transactionId, bidId]
+        );
+
+        if (bid.vendor_phone) {
+            const message = `💸 *SoundScout Final Payout Released!*\n\nDear *${bid.vendor_name}*,\n\nThe remaining 50% final payment of *Rs. ${Number(bid.final_payout_amount).toLocaleString()}* for event *${bid.event_type}* has been released by the organizer!\n\nTransaction Reference: *${transactionId}*.\n\nThank you for utilizing SoundScout! Please encourage the organizer to write a review.`;
+            sendWhatsAppMessage(bid.vendor_phone, message).catch(err => console.error("Error sending final payout WhatsApp alert:", err));
+        }
+
+        res.status(200).json({ message: 'Final payment successfully released to the vendor!' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error releasing final payment.' });
+    }
+});
+
+// POST /api/reviews - Organizer submits a review/rating for a vendor
+router.post('/reviews', authenticateUser, requireRole('organizer'), async (req, res) => {
+    const { eventId, vendorId, rating, comment } = req.body;
+    const organizer_id = req.user.user_id;
+
+    if (!eventId || !vendorId || rating === undefined) {
+        return res.status(400).json({ error: 'eventId, vendorId, and rating are required.' });
+    }
+
+    const numericRating = Number(rating);
+    if (isNaN(numericRating) || numericRating < 1.0 || numericRating > 5.0) {
+        return res.status(400).json({ error: 'Rating must be a decimal between 1.0 and 5.0.' });
+    }
+
+    try {
+        await pool.query(
+            `INSERT INTO reviews (event_id, vendor_id, organizer_id, rating, comment)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (event_id, vendor_id, organizer_id) 
+             DO UPDATE SET rating = EXCLUDED.rating, comment = EXCLUDED.comment`,
+            [eventId, vendorId, organizer_id, numericRating, comment || '']
+        );
+
+        // Recalculate average rating for users table cache
+        const avgResult = await pool.query(
+            `SELECT ROUND(AVG(rating), 1) as avg_rating FROM reviews WHERE vendor_id = $1`,
+            [vendorId]
+        );
+        const newAvg = avgResult.rows[0]?.avg_rating || 5.0;
+        await pool.query(`UPDATE users SET rating = $1 WHERE user_id = $2`, [newAvg, vendorId]);
+
+        res.status(201).json({ message: 'Review submitted successfully!', rating: newAvg });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error saving review.' });
+    }
+});
+
+// GET /api/reviews/vendor/:vendorId - Fetch reviews for a vendor
+router.get('/reviews/vendor/:vendorId', authenticateUser, async (req, res) => {
+    const { vendorId } = req.params;
+    try {
+        const result = await pool.query(
+            `SELECT r.review_id, r.rating, r.comment, r.created_at, u.name AS organizer_name 
+             FROM reviews r 
+             JOIN users u ON r.organizer_id = u.user_id 
+             WHERE r.vendor_id = $1 
+             ORDER BY r.created_at DESC`,
+            [vendorId]
+        );
+        res.status(200).json(result.rows);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error fetching vendor reviews.' });
     }
 });
 
