@@ -1,2 +1,3 @@
-2026/07/26-12:43:34.236 f8e7b Creating DB /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/Extension State since it was missing.
-2026/07/26-12:43:34.243 f8e7b Reusing MANIFEST /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/Extension State/MANIFEST-000001
+2026/07/26-14:17:03.792 10690f Reusing MANIFEST /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/Extension State/MANIFEST-000001
+2026/07/26-14:17:03.792 10690f Recovering log #3
+2026/07/26-14:17:03.792 10690f Reusing old log /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/Extension State/000003.log 

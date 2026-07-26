@@ -1,3 +1,3 @@
-2026/07/26-12:46:06.219 f9543 Reusing MANIFEST /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/Sync Data/LevelDB/MANIFEST-000001
-2026/07/26-12:46:06.220 f9543 Recovering log #3
-2026/07/26-12:46:06.221 f9543 Reusing old log /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/Sync Data/LevelDB/000003.log 
+2026/07/26-14:34:59.345 109154 Reusing MANIFEST /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/Sync Data/LevelDB/MANIFEST-000001
+2026/07/26-14:34:59.345 109154 Recovering log #3
+2026/07/26-14:34:59.346 109154 Reusing old log /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/Sync Data/LevelDB/000003.log 

@@ -1,2 +1,3 @@
-2026/07/26-12:43:39.157 f8e7b Creating DB /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/GCM Store since it was missing.
-2026/07/26-12:43:39.162 f8e7b Reusing MANIFEST /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/GCM Store/MANIFEST-000001
+2026/07/26-14:17:11.756 10690f Reusing MANIFEST /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/GCM Store/MANIFEST-000001
+2026/07/26-14:17:11.757 10690f Recovering log #3
+2026/07/26-14:17:11.757 10690f Reusing old log /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/GCM Store/000003.log 

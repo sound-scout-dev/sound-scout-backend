@@ -31,8 +31,36 @@ client.on('ready', () => {
     console.log('\n✅ Headless WhatsApp Worker is ONLINE and authenticated!');
 });
 
-client.on('auth_failure', (msg) => {
-    console.error('❌ WhatsApp Authentication Failure:', msg);
+client.on('message', async (msg) => {
+    // Avoid responding to group messages or messages from ourselves
+    if (msg.fromMe || msg.from.includes('@g.us')) return;
+
+    console.log(`\n💬 WhatsApp support message received from ${msg.from}: "${msg.body}"`);
+    
+    try {
+        const response = await fetch('http://localhost:8000/api/support', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                session_id: msg.from,
+                message: msg.body
+            })
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            if (data.reply) {
+                await msg.reply(data.reply);
+                console.log(`🤖 WhatsApp Support Bot replied to ${msg.from}`);
+            }
+        } else {
+            console.error('❌ Flask support bot returned non-200 response status');
+        }
+    } catch (err) {
+        console.error('❌ Error forwarding message to support bot:', err.message);
+    }
 });
 
 client.initialize();
