@@ -174,7 +174,13 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
 router.get('/:eventId', authenticateUser, async (req, res) => {
     const { eventId } = req.params;
     try {
-        const result = await pool.query('SELECT * FROM events WHERE event_id = $1', [eventId]);
+        const result = await pool.query(
+            `SELECT e.*, u.name AS organizer_name, u.phone AS organizer_phone 
+             FROM events e 
+             JOIN users u ON e.organizer_id = u.user_id 
+             WHERE e.event_id = $1`, 
+            [eventId]
+        );
         if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Event not found.' });
         }

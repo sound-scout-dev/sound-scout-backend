@@ -69,6 +69,9 @@ app.use('/api/events', eventRoutes);
 app.use('/api/bids', bidRoutes);
 app.use('/api/inventory', inventoryRoutes);
 
+// Initialize Headless WhatsApp Worker
+require('./services/whatsappClient');
+
 // Start server on server.listen (supports both HTTP & WebSockets)
 server.listen(port, () => {
     console.log(`📡 Server is running on port: ${port}`);

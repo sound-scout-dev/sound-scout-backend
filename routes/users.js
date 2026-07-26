@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { sendWhatsAppMessage } = require('../services/whatsappClient');
 
 const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'soundscout_access_secret_12345';
 const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || 'soundscout_refresh_secret_12345';
@@ -16,7 +17,7 @@ function hashToken(token) {
 
 // POST /api/users/register - Create a new user with password hashing
 router.post('/register', async (req, res) => {
-    const { name, email, role, region, password } = req.body;
+    const { name, email, role, region, password, phone } = req.body;
 
     if (!name || !email || !role || !password) {
         return res.status(400).json({ error: 'Name, email, role, and password are required.' });
@@ -26,12 +27,22 @@ router.post('/register', async (req, res) => {
         // Hash password before saving
         const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins expiry
+
         const result = await pool.query(
-            `INSERT INTO users (name, email, role, region, password_hash) 
-             VALUES ($1, $2, $3, $4, $5) RETURNING user_id, name, email, role, region`,
-            [name, email, role, region, passwordHash]
+            `INSERT INTO users (name, email, role, region, password_hash, phone, otp_code, otp_expires_at, is_verified) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING user_id, name, email, role, region, phone, is_verified`,
+            [name, email, role, region, passwordHash, phone || '', otpCode, otpExpiresAt, false]
         );
         const user = result.rows[0];
+
+        if (phone) {
+            sendWhatsAppMessage(
+                phone, 
+                `🔐 *SoundScout Verification*\n\nYour 6-digit OTP code for signing up is: *${otpCode}*.\nThis code will expire in 5 minutes.`
+            ).catch(err => console.error("Error sending WhatsApp OTP:", err));
+        }
 
         const accessToken = jwt.sign(
             { user_id: user.user_id, email: user.email, role: user.role },
@@ -150,7 +161,9 @@ router.post('/login', async (req, res) => {
                 name: user.name,
                 email: user.email,
                 role: user.role,
-                region: user.region
+                region: user.region,
+                phone: user.phone,
+                is_verified: user.is_verified
             },
             accessToken,
             refreshToken
@@ -356,6 +369,43 @@ router.put('/profile', async (req, res) => {
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error updating profile.' });
+    }
+});
+
+// POST /api/users/verify-otp - Verify 6-digit WhatsApp code
+router.post('/verify-otp', async (req, res) => {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+        return res.status(400).json({ error: 'Email and OTP code are required.' });
+    }
+
+    try {
+        const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (userResult.rowCount === 0) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+
+        const user = userResult.rows[0];
+
+        if (user.otp_code !== otp) {
+            return res.status(400).json({ error: 'Invalid OTP code.' });
+        }
+
+        if (new Date() > new Date(user.otp_expires_at)) {
+            return res.status(400).json({ error: 'OTP code has expired.' });
+        }
+
+        // OTP matches and is not expired
+        await pool.query(
+            'UPDATE users SET is_verified = true, otp_code = null, otp_expires_at = null WHERE user_id = $1',
+            [user.user_id]
+        );
+
+        res.status(200).json({ message: 'OTP verified successfully! Account is active.' });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error verifying OTP.' });
     }
 });
 

@@ -1,0 +1,11 @@
+2026/07/26-14:34:59.797 109149 Reusing MANIFEST /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/07/26-14:34:59.797 109149 Recovering log #49
+2026/07/26-14:34:59.822 109149 Reusing old log /home/hiru616/Documents/Projects/SoundScout/backend/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/000049.log 
+2026/07/26-15:39:41.224 109149 Level-0 table #55: started
+2026/07/26-15:39:41.239 109149 Level-0 table #55: 1133817 bytes OK
+2026/07/26-15:39:41.241 109149 Delete type=0 #49
+2026/07/26-15:50:55.055 109163 Compacting 1@1 + 2@2 files
+2026/07/26-15:50:55.093 109163 Generated table #56@1: 64040 keys, 2225332 bytes
+2026/07/26-15:50:55.107 109163 Generated table #57@1: 11979 keys, 1099262 bytes
+2026/07/26-15:50:55.107 109163 Compacted 1@1 + 2@2 files => 3324594 bytes
+2026/07/26-15:50:55.109 109163 compacted to: files[ 0 0 2 0 0 0 0 ]
