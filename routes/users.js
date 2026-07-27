@@ -88,7 +88,7 @@ router.post('/register', async (req, res) => {
             refreshToken
         });
     } catch (err) {
-        console.error(err.message);
+        console.error("Registration error:", err);
         if (err.code === '23505') { // Unique constraint violation (e.g. duplicate email)
             return res.status(400).json({ error: 'Email already registered.' });
         }
