@@ -4,7 +4,7 @@ const pool = require('../config/db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { sendWhatsAppMessage } = require('../services/whatsappClient');
+const axios = require('axios');
 const { authenticateUser, requireRole } = require('../middleware/auth');
 
 const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'soundscout_access_secret_12345';
@@ -39,10 +39,13 @@ router.post('/register', async (req, res) => {
         const user = result.rows[0];
 
         if (phone) {
-            sendWhatsAppMessage(
-                phone, 
-                `🔐 *SoundScout Verification*\n\nYour 6-digit OTP code for signing up is: *${otpCode}*.\nThis code will expire in 5 minutes.`
-            ).catch(err => console.error("Error sending WhatsApp OTP:", err));
+            const otpMessage = `🔐 *SoundScout Verification*\n\nYour 6-digit OTP code for signing up is: *${otpCode}*.\nThis code will expire in 5 minutes.`;
+
+            axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
+                secret: process.env.WORKER_SECRET,
+                phone: phone,
+                message: otpMessage
+            }).catch(err => console.error("Error sending WhatsApp OTP:", err.message));
         }
 
         const accessToken = jwt.sign(
@@ -57,7 +60,7 @@ router.post('/register', async (req, res) => {
         );
 
         const hashedRefreshToken = hashToken(refreshToken);
-        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); 
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
         await pool.query(
             'INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
@@ -422,7 +425,7 @@ router.post('/subscribe-premium', authenticateUser, requireRole('vendor'), async
              WHERE user_id = $2`,
             [expiresAt, vendor_id]
         );
-        res.status(200).json({ 
+        res.status(200).json({
             message: 'Successfully subscribed to Monthly Premium Plan!',
             is_premium: true,
             subscription_expires_at: expiresAt
