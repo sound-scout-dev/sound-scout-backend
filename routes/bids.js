@@ -178,11 +178,15 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
             
             if (vendor_phone) {
                 const message = `🎉 *SoundScout Bid Accepted!*\n\nDear *${vendor_name}*,\n\nWe are excited to inform you that your bid of *Rs. ${Number(proposed_price).toLocaleString()}* for the event *${event_type}* at *${location}* has been *ACCEPTED*!\n\nOrganizer details:\n👤 Name: *${organizer_name}*\n📞 Phone: *${organizer_phone || 'N/A'}*\n\nPlease log in to your SoundScout dashboard to coordinate further details.`;
-                axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
-                    secret: process.env.WORKER_SECRET,
-                    phone: vendor_phone,
-                    message: message
-                }).catch(err => console.error("Error sending accept bid WhatsApp:", err.message));
+                try {
+                    await axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
+                        secret: process.env.WORKER_SECRET,
+                        phone: vendor_phone,
+                        message: message
+                    });
+                } catch (err) {
+                    console.error("Error sending accept bid WhatsApp:", err.message);
+                }
             }
         }
 
@@ -332,11 +336,15 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
             
             if (vendor_phone) {
                 const message = `🎉 *SoundScout Bid Accepted & Escrow Deposit Paid!*\n\nDear *${vendor_name}*,\n\nWe are excited to inform you that your bid of *Rs. ${Number(proposed_price).toLocaleString()}* for the event *${event_type}* at *${location}* has been *ACCEPTED*!\n\nDeposit Paid: *Rs. ${Number(depositAmount).toLocaleString()}* (50% advance + 6% commission).\nOrganizer Details:\n👤 Name: *${organizer_name}*\n📞 Phone: *${organizer_phone || 'N/A'}*\n\nDirect contact details are now unlocked. Release of the final 50% payout occurs on the event day. Let's coordinate!`;
-                axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
-                    secret: process.env.WORKER_SECRET,
-                    phone: vendor_phone,
-                    message: message
-                }).catch(err => console.error("Error sending accept bid WhatsApp:", err.message));
+                try {
+                    await axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
+                        secret: process.env.WORKER_SECRET,
+                        phone: vendor_phone,
+                        message: message
+                    });
+                } catch (err) {
+                    console.error("Error sending accept bid WhatsApp:", err.message);
+                }
             }
         }
 
@@ -394,11 +402,15 @@ router.put('/:bidId/final-payment', authenticateUser, requireRole('organizer'), 
 
         if (bid.vendor_phone) {
             const message = `💸 *SoundScout Final Payout Released!*\n\nDear *${bid.vendor_name}*,\n\nThe remaining 50% final payment of *Rs. ${Number(bid.final_payout_amount).toLocaleString()}* for event *${bid.event_type}* has been released by the organizer!\n\nTransaction Reference: *${transactionId}*.\n\nThank you for utilizing SoundScout! Please encourage the organizer to write a review.`;
-            axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
-                secret: process.env.WORKER_SECRET,
-                phone: bid.vendor_phone,
-                message: message
-            }).catch(err => console.error("Error sending final payout WhatsApp alert:", err.message));
+            try {
+                await axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
+                    secret: process.env.WORKER_SECRET,
+                    phone: bid.vendor_phone,
+                    message: message
+                });
+            } catch (err) {
+                console.error("Error sending final payout WhatsApp alert:", err.message);
+            }
         }
 
         res.status(200).json({ message: 'Final payment successfully released to the vendor!' });

@@ -41,11 +41,15 @@ router.post('/register', async (req, res) => {
         if (phone) {
             const otpMessage = `🔐 *SoundScout Verification*\n\nYour 6-digit OTP code for signing up is: *${otpCode}*.\nThis code will expire in 5 minutes.`;
 
-            axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
-                secret: process.env.WORKER_SECRET,
-                phone: phone,
-                message: otpMessage
-            }).catch(err => console.error("Error sending WhatsApp OTP:", err.message));
+            try {
+                await axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
+                    secret: process.env.WORKER_SECRET,
+                    phone: phone,
+                    message: otpMessage
+                });
+            } catch (err) {
+                console.error("Error sending WhatsApp OTP:", err.message);
+            }
         }
 
         const accessToken = jwt.sign(
