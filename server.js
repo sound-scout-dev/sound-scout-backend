@@ -76,12 +76,13 @@ app.post(['/api/ai-voice', '/ai-voice'], async (req, res) => {
         const targetUrl = `${baseUrl}/api/voice-intake`;
         console.log(`📡 Proxying AI Voice Intake to: ${targetUrl}`);
 
+        const headers = { ...req.headers };
+        delete headers.host;
+        delete headers.connection;
+
         const response = await fetch(targetUrl, {
             method: 'POST',
-            headers: {
-                ...req.headers,
-                host: new URL(targetUrl).host,
-            },
+            headers,
             body: req
         });
 
@@ -99,12 +100,13 @@ app.post(['/api/ai-image', '/ai-image'], async (req, res) => {
         const targetUrl = `${baseUrl}/api/venue-analysis`;
         console.log(`📡 Proxying AI Venue Analysis to: ${targetUrl}`);
 
+        const headers = { ...req.headers };
+        delete headers.host;
+        delete headers.connection;
+
         const response = await fetch(targetUrl, {
             method: 'POST',
-            headers: {
-                ...req.headers,
-                host: new URL(targetUrl).host,
-            },
+            headers,
             body: req
         });
 
