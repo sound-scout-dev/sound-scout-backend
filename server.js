@@ -59,6 +59,9 @@ app.get('/api/health', (req, res) => {
 
 // Import Routes
 const fetch = require('node-fetch');
+const multer = require('multer');
+const FormData = require('form-data');
+const upload = multer({ storage: multer.memoryStorage() });
 const getAiServiceBaseUrl = () => {
     const envUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
     try {
@@ -70,20 +73,27 @@ const getAiServiceBaseUrl = () => {
 };
 
 // AI Proxy Routes
-app.post(['/api/ai-voice', '/ai-voice'], async (req, res) => {
+// multer parses the multipart upload into memory; we rebuild a proper FormData to forward to Flask
+app.post(['/api/ai-voice', '/ai-voice'], upload.single('audio'), async (req, res) => {
     try {
         const baseUrl = getAiServiceBaseUrl();
         const targetUrl = `${baseUrl}/api/voice-intake`;
         console.log(`📡 Proxying AI Voice Intake to: ${targetUrl}`);
 
-        const headers = { ...req.headers };
-        delete headers.host;
-        delete headers.connection;
+        if (!req.file) {
+            return res.status(400).json({ error: 'No audio file received by proxy' });
+        }
+
+        const form = new FormData();
+        form.append('audio', req.file.buffer, {
+            filename: req.file.originalname || 'voice_intake.webm',
+            contentType: req.file.mimetype || 'audio/webm',
+        });
 
         const response = await fetch(targetUrl, {
             method: 'POST',
-            headers,
-            body: req
+            headers: form.getHeaders(),
+            body: form
         });
 
         const data = await response.json();
@@ -94,20 +104,26 @@ app.post(['/api/ai-voice', '/ai-voice'], async (req, res) => {
     }
 });
 
-app.post(['/api/ai-image', '/ai-image'], async (req, res) => {
+app.post(['/api/ai-image', '/ai-image'], upload.single('image'), async (req, res) => {
     try {
         const baseUrl = getAiServiceBaseUrl();
         const targetUrl = `${baseUrl}/api/venue-analysis`;
         console.log(`📡 Proxying AI Venue Analysis to: ${targetUrl}`);
 
-        const headers = { ...req.headers };
-        delete headers.host;
-        delete headers.connection;
+        if (!req.file) {
+            return res.status(400).json({ error: 'No image file received by proxy' });
+        }
+
+        const form = new FormData();
+        form.append('image', req.file.buffer, {
+            filename: req.file.originalname || 'venue.jpg',
+            contentType: req.file.mimetype || 'image/jpeg',
+        });
 
         const response = await fetch(targetUrl, {
             method: 'POST',
-            headers,
-            body: req
+            headers: form.getHeaders(),
+            body: form
         });
 
         const data = await response.json();
