@@ -70,7 +70,7 @@ const getAiServiceBaseUrl = () => {
 };
 
 // AI Proxy Routes
-app.post('/api/ai-voice', async (req, res) => {
+app.post(['/api/ai-voice', '/ai-voice'], async (req, res) => {
     try {
         const baseUrl = getAiServiceBaseUrl();
         const targetUrl = `${baseUrl}/api/voice-intake`;
@@ -93,7 +93,7 @@ app.post('/api/ai-voice', async (req, res) => {
     }
 });
 
-app.post('/api/ai-image', async (req, res) => {
+app.post(['/api/ai-image', '/ai-image'], async (req, res) => {
     try {
         const baseUrl = getAiServiceBaseUrl();
         const targetUrl = `${baseUrl}/api/venue-analysis`;
