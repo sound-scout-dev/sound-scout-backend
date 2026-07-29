@@ -58,6 +58,64 @@ app.get('/api/health', (req, res) => {
 
 
 // Import Routes
+const fetch = require('node-fetch');
+const getAiServiceBaseUrl = () => {
+    const envUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+    try {
+        const parsed = new URL(envUrl);
+        return parsed.origin;
+    } catch (e) {
+        return envUrl.replace(/\/api\/generate\/?$/, '').replace(/\/$/, '');
+    }
+};
+
+// AI Proxy Routes
+app.post(['/api/ai-voice', '/ai-voice'], async (req, res) => {
+    try {
+        const baseUrl = getAiServiceBaseUrl();
+        const targetUrl = `${baseUrl}/api/voice-intake`;
+        console.log(`📡 Proxying AI Voice Intake to: ${targetUrl}`);
+
+        const response = await fetch(targetUrl, {
+            method: 'POST',
+            headers: {
+                ...req.headers,
+                host: new URL(targetUrl).host,
+            },
+            body: req
+        });
+
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (err) {
+        console.error('AI Voice Proxy Error:', err.message);
+        res.status(500).json({ error: 'Failed to proxy voice intake request' });
+    }
+});
+
+app.post(['/api/ai-image', '/ai-image'], async (req, res) => {
+    try {
+        const baseUrl = getAiServiceBaseUrl();
+        const targetUrl = `${baseUrl}/api/venue-analysis`;
+        console.log(`📡 Proxying AI Venue Analysis to: ${targetUrl}`);
+
+        const response = await fetch(targetUrl, {
+            method: 'POST',
+            headers: {
+                ...req.headers,
+                host: new URL(targetUrl).host,
+            },
+            body: req
+        });
+
+        const data = await response.json();
+        res.status(response.status).json(data);
+    } catch (err) {
+        console.error('AI Image Proxy Error:', err.message);
+        res.status(500).json({ error: 'Failed to proxy image analysis request' });
+    }
+});
+
 const userRoutes = require('./routes/users');
 const eventRoutes = require('./routes/events');
 const bidRoutes = require('./routes/bids');
