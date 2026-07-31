@@ -111,7 +111,25 @@ router.post('/register', async (req, res) => {
             maxAge: 15 * 60 * 1000
         });
 
-        const botPhone = process.env.WHATSAPP_BOT_PHONE || '94XXXXXXXXX';
+// Helper to resolve the active WhatsApp bot phone number
+async function getBotPhone() {
+    let raw = String(process.env.WHATSAPP_BOT_PHONE || '').replace(/\D/g, '');
+    if (raw && raw.length >= 9 && !raw.includes('X')) {
+        return raw;
+    }
+    try {
+        const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
+        const resp = await axios.get(`${workerUrl}/`, { timeout: 4000 });
+        if (resp.data && resp.data.botPhone) {
+            return resp.data.botPhone.replace(/\D/g, '');
+        }
+    } catch (e) {
+        console.warn("Could not query worker for botPhone:", e.message);
+    }
+    return '94703252870';
+}
+
+        const botPhone = await getBotPhone();
 
         res.status(201).json({
             success: true,
