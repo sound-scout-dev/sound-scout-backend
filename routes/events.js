@@ -4,6 +4,36 @@ const router = express.Router();
 const pool = require('../config/db');
 const { authenticateUser, requireRole } = require('../middleware/auth');
 
+function extractDistrictFromLocation(location) {
+    if (!location) return 'Colombo';
+    const locLower = location.toLowerCase();
+    if (locLower.includes('moratuwa') || locLower.includes('nugegoda') || locLower.includes('maharagama') || locLower.includes('dehiwala') || locLower.includes('mount lavinia') || locLower.includes('colombo') || locLower.includes('kotte') || locLower.includes('homagama') || locLower.includes('battaramulla') || locLower.includes('malabe')) {
+        return 'Colombo';
+    }
+    if (locLower.includes('gampaha') || locLower.includes('negombo') || locLower.includes('kelaniya') || locLower.includes('wattala') || locLower.includes('kadawatha') || locLower.includes('ja-ela')) {
+        return 'Gampaha';
+    }
+    if (locLower.includes('kalutara') || locLower.includes('panadura') || locLower.includes('horana') || locLower.includes('beruwala')) {
+        return 'Kalutara';
+    }
+    if (locLower.includes('kandy') || locLower.includes('peradeniya') || locLower.includes('katugastota') || locLower.includes('gampola')) {
+        return 'Kandy';
+    }
+    if (locLower.includes('galle') || locLower.includes('hikkaduwa')) {
+        return 'Galle';
+    }
+    if (locLower.includes('matara') || locLower.includes('weligama')) {
+        return 'Matara';
+    }
+    if (locLower.includes('jaffna')) {
+        return 'Jaffna';
+    }
+    if (locLower.includes('kurunegala')) {
+        return 'Kurunegala';
+    }
+    return 'Colombo';
+}
+
 // POST /api/events - Organizer submits a new event
 router.post('/', authenticateUser, requireRole('organizer'), async (req, res) => {
     const { name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location, event_date } = req.body;
@@ -18,15 +48,14 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
         const crowd = Math.round(Number(crowd_count)) || 0;
         const venue_size = venue_size_sqm ? Math.round(Number(venue_size_sqm)) : null;
 
-        // Note: The ai_infrastructure_plan is left null here.
-        // We will update it later when the Python microservice returns the AI data.
         const req_json = requirements ? JSON.stringify(requirements) : JSON.stringify(["Audio", "Lighting", "Staging"]);
         const env = environment || 'Indoor';
 
+        // District is initially null; Python AI service will resolve it via LLM location analysis during plan generation
         const result = await pool.query(
-            `INSERT INTO events (organizer_id, name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location, event_date)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-            [organizer_id, name || null, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '', event_date || null]
+            `INSERT INTO events (organizer_id, name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location, district, event_date)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+            [organizer_id, name || null, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '', null, event_date || null]
         );
         res.status(201).json({
             message: 'Event created, awaiting AI plan',
@@ -46,16 +75,29 @@ router.get('/open', authenticateUser, requireRole('vendor'), async (req, res) =>
             "SELECT region FROM users WHERE user_id = $1",
             [req.user.user_id]
         );
-        const region = vendorRes.rows[0]?.region;
+        const region = vendorRes.rows[0]?.region ? vendorRes.rows[0].region.trim() : '';
 
         let queryStr = "SELECT * FROM events WHERE status = 'bidding_open'";
         let queryParams = [];
 
-        if (region) {
+        if (region && region.toLowerCase() !== 'all') {
             const districts = region.split(',').map(d => d.trim()).filter(Boolean);
             if (districts.length > 0) {
                 const placeholders = districts.map((_, i) => `$${i + 1}`).join(', ');
-                queryStr += ` AND (district IN (${placeholders}) OR ${districts.map((_, i) => `location ILIKE $${districts.length + i + 1}`).join(' OR ')})`;
+                const ilikeConditions = districts.map((_, i) => `location ILIKE $${districts.length + i + 1}`).join(' OR ');
+
+                // Rule: Event is visible if:
+                // 1. District is NULL / empty / 'Unknown' (unidentified location -> open to ALL vendors)
+                // 2. District matches vendor's registered district
+                // 3. Location string matches vendor's district
+                queryStr += ` AND (
+                    district IS NULL OR 
+                    district = '' OR 
+                    LOWER(district) = 'unknown' OR 
+                    LOWER(district) = 'all' OR 
+                    district IN (${placeholders}) OR 
+                    (${ilikeConditions})
+                )`;
                 queryParams = [...districts, ...districts.map(d => `%${d}%`)];
             }
         }
@@ -145,12 +187,12 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
         }
 
         const aiData = await aiResponse.json();
-        const resolvedDistrict = aiData.resolved_district || 'Colombo';
+        let resolvedDistrict = aiData.resolved_district || null;
+        if (resolvedDistrict && (resolvedDistrict.toLowerCase() === 'unknown' || resolvedDistrict.toLowerCase() === 'none')) {
+            resolvedDistrict = null; // Unidentified location -> Visible to all vendors!
+        }
 
-        // Ensure we're pulling the plan correctly depending on your Flask app's response structure
-        const equipmentPlan = aiData.equipment_plan || aiData;
-
-        // 4. Update the database with the generated dual-plan options, keep status as draft, and save resolved district
+        // 4. Update the database with the generated dual-plan options, keep status as draft, and save AI resolved district
         const updateResult = await pool.query(
             `UPDATE events 
              SET ai_infrastructure_plan = $1, district = $2, status = 'draft' 
