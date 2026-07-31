@@ -16,37 +16,41 @@ function hashToken(token) {
     return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-// Helper: send via WhatsApp worker with automatic retries for 503 (worker reconnecting)
-async function sendWhatsAppWithRetry(phone, message, maxAttempts = 4) {
+// Helper: send OTP via WhatsApp worker.
+// Strategy:
+//   1. Try direct send (works if user has chatted with us before).
+//   2. If direct send fails (new user / stranger), queue OTP in the worker.
+//      The OTP is delivered the instant the user messages the linked number.
+// Returns { delivered: true } on direct success, or { queued: true } if waiting for user to initiate.
+async function sendWhatsAppOTP(phone, message) {
     const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
     const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
-    let lastErr;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-            const resp = await axios.post(`${workerUrl}/api/send-message`, {
-                secret: workerSecret,
-                phone,
-                message
-            }, { timeout: 15000 });
-            console.log(`✅ WhatsApp message delivered to ${phone} (attempt ${attempt})`);
-            return resp.data;
-        } catch (err) {
-            lastErr = err;
-            const status = err.response?.status;
-            const errData = err.response?.data || err.message;
-            console.warn(`⚠️  WhatsApp send attempt ${attempt}/${maxAttempts} failed (status ${status}):`, errData);
-            if (status === 503 && attempt < maxAttempts) {
-                // Worker is reconnecting — wait and retry
-                const delayMs = attempt * 5000; // 5s, 10s, 15s
-                console.log(`⏳ Retrying in ${delayMs / 1000}s...`);
-                await new Promise(r => setTimeout(r, delayMs));
-            } else {
-                break; // non-503 error or max attempts reached
-            }
-        }
+
+    // --- Attempt 1: direct send (existing contact) ---
+    try {
+        await axios.post(`${workerUrl}/api/send-message`, {
+            secret: workerSecret, phone, message
+        }, { timeout: 15000 });
+        console.log(`✅ WhatsApp OTP directly delivered to ${phone}`);
+        return { delivered: true };
+    } catch (err) {
+        const status = err.response?.status;
+        console.warn(`⚠️  Direct send failed for ${phone} (status ${status}) — will queue OTP for first-time delivery`);
     }
-    throw lastErr;
+
+    // --- Attempt 2: queue-otp for first-time users ---
+    try {
+        await axios.post(`${workerUrl}/api/queue-otp`, {
+            secret: workerSecret, phone, message
+        }, { timeout: 10000 });
+        console.log(`📋 OTP queued for ${phone} — awaiting user's first message to the linked number`);
+        return { queued: true };
+    } catch (err) {
+        console.error(`❌ Both direct send and queue-otp failed for ${phone}:`, err.response?.data || err.message);
+        throw err;
+    }
 }
+
 
 // POST /api/users/register - Create a new user with password hashing
 router.post('/register', async (req, res) => {
@@ -70,14 +74,17 @@ router.post('/register', async (req, res) => {
         );
         const user = result.rows[0];
 
+        let otpQueued = false;
         if (phone) {
             const otpMessage = `🔐 *SoundScout Verification*\n\nYour 6-digit OTP code for signing up is: *${otpCode}*.\nThis code will expire in 5 minutes.`;
             try {
-                await sendWhatsAppWithRetry(phone, otpMessage);
+                const otpResult = await sendWhatsAppOTP(phone, otpMessage);
+                otpQueued = !!otpResult?.queued;
             } catch (err) {
-                console.error("❌ Error sending WhatsApp OTP after retries:", err.response?.data || err.message);
+                console.error("❌ Error sending WhatsApp OTP:", err.response?.data || err.message);
             }
         }
+
 
         const accessToken = jwt.sign(
             { user_id: user.user_id, email: user.email, role: user.role },
@@ -116,7 +123,11 @@ router.post('/register', async (req, res) => {
             message: 'Registration successful!',
             user: user,
             accessToken,
-            refreshToken
+            refreshToken,
+            otp_queued: otpQueued,
+            otp_instruction: otpQueued
+                ? `Your OTP is queued. Please send any message (e.g. "hi") to our WhatsApp number to receive your code instantly.`
+                : null
         });
     } catch (err) {
         console.error("Registration error:", err);
@@ -474,7 +485,7 @@ router.post('/resend-otp', async (req, res) => {
         const otpMessage = `🔐 *SoundScout Verification*\n\nYour new 6-digit OTP code is: *${otpCode}*.\nThis code will expire in 5 minutes.`;
 
         try {
-            await sendWhatsAppWithRetry(user.phone, otpMessage);
+            await sendWhatsAppOTP(user.phone, otpMessage);
         } catch (err) {
             console.error("❌ Error resending WhatsApp OTP after retries:", err.response?.data || err.message);
         }
