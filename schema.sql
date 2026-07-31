@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR(50) NOT NULL,
     region VARCHAR(255),
     password_hash TEXT NOT NULL,
+    phone VARCHAR(50),
+    verification_code VARCHAR(50),
+    is_verified BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

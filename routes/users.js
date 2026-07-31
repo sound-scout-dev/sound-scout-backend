@@ -16,17 +16,24 @@ function hashToken(token) {
     return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-// Helper: send OTP via WhatsApp worker.
-// Strategy:
-//   1. Try direct send (works if user has chatted with us before).
-//   2. If direct send fails (new user / stranger), queue OTP in the worker.
-//      The OTP is delivered the instant the user messages the linked number.
-// Returns { delivered: true } on direct success, or { queued: true } if waiting for user to initiate.
+// Helper to generate 6-character uppercase alphanumeric code prefixed with 'VERIFY-'
+function generateVerificationCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return `VERIFY-${code}`;
+}
+
+// In-memory cache for recently verified codes (for polling endpoint resolution)
+const verifiedCodesCache = new Set();
+
+// Helper: send OTP via WhatsApp worker (legacy fallback)
 async function sendWhatsAppOTP(phone, message) {
     const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
     const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
 
-    // --- Attempt 1: direct send (existing contact) ---
     try {
         await axios.post(`${workerUrl}/api/send-message`, {
             secret: workerSecret, phone, message
@@ -38,7 +45,6 @@ async function sendWhatsAppOTP(phone, message) {
         console.warn(`⚠️  Direct send failed for ${phone} (status ${status}) — will queue OTP for first-time delivery`);
     }
 
-    // --- Attempt 2: queue-otp for first-time users ---
     try {
         await axios.post(`${workerUrl}/api/queue-otp`, {
             secret: workerSecret, phone, message
@@ -52,7 +58,7 @@ async function sendWhatsAppOTP(phone, message) {
 }
 
 
-// POST /api/users/register - Create a new user with password hashing
+// POST /api/users/register - Create a new user with password hashing & Click-to-Verify code
 router.post('/register', async (req, res) => {
     const { name, email, role, region, password, phone } = req.body;
 
@@ -63,28 +69,14 @@ router.post('/register', async (req, res) => {
     try {
         // Hash password before saving
         const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-
-        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-        const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins expiry
+        const verificationCode = generateVerificationCode();
 
         const result = await pool.query(
-            `INSERT INTO users (name, email, role, region, password_hash, phone, otp_code, otp_expires_at, is_verified) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING user_id, name, email, role, region, phone, is_verified`,
-            [name, email, role, region, passwordHash, phone || '', otpCode, otpExpiresAt, false]
+            `INSERT INTO users (name, email, role, region, password_hash, phone, verification_code, is_verified) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING user_id, name, email, role, region, phone, is_verified, verification_code`,
+            [name, email, role, region, passwordHash, phone || '', verificationCode, false]
         );
         const user = result.rows[0];
-
-        let otpQueued = false;
-        if (phone) {
-            const otpMessage = `🔐 *SoundScout Verification*\n\nYour 6-digit OTP code for signing up is: *${otpCode}*.\nThis code will expire in 5 minutes.`;
-            try {
-                const otpResult = await sendWhatsAppOTP(phone, otpMessage);
-                otpQueued = !!otpResult?.queued;
-            } catch (err) {
-                console.error("❌ Error sending WhatsApp OTP:", err.response?.data || err.message);
-            }
-        }
-
 
         const accessToken = jwt.sign(
             { user_id: user.user_id, email: user.email, role: user.role },
@@ -119,15 +111,16 @@ router.post('/register', async (req, res) => {
             maxAge: 15 * 60 * 1000
         });
 
+        const botPhone = process.env.WHATSAPP_BOT_PHONE || '94XXXXXXXXX';
+
         res.status(201).json({
+            success: true,
+            verificationCode: verificationCode,
+            botPhone: botPhone,
             message: 'Registration successful!',
             user: user,
             accessToken,
-            refreshToken,
-            otp_queued: otpQueued,
-            otp_instruction: otpQueued
-                ? `Your OTP is queued. Please send any message (e.g. "hi") to our WhatsApp number to receive your code instantly.`
-                : null
+            refreshToken
         });
     } catch (err) {
         console.error("Registration error:", err);
@@ -517,6 +510,82 @@ router.post('/subscribe-premium', authenticateUser, requireRole('vendor'), async
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error subscribing to premium.' });
+    }
+});
+
+// POST /api/users/verify-code - Verify Click-to-Verify code sent from WhatsApp worker
+router.post('/verify-code', async (req, res) => {
+    const { secret, code, phone } = req.body;
+    const expectedSecret = process.env.WORKER_SECRET || 'super_secret_key';
+
+    if (secret !== expectedSecret) {
+        return res.status(403).json({ success: false, message: 'Unauthorized' });
+    }
+
+    if (!code) {
+        return res.status(400).json({ success: false, message: 'Verification code is required' });
+    }
+
+    try {
+        const cleanCode = code.trim().toUpperCase();
+        const userResult = await pool.query(
+            'SELECT * FROM users WHERE UPPER(verification_code) = UPPER($1)',
+            [cleanCode]
+        );
+
+        if (userResult.rowCount === 0) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired code' });
+        }
+
+        const user = userResult.rows[0];
+
+        // Update user: set is_verified = true, clear verification_code = NULL
+        await pool.query(
+            `UPDATE users 
+             SET is_verified = true, 
+                 verification_code = NULL, 
+                 phone = CASE WHEN $1 <> '' THEN $1 ELSE phone END 
+             WHERE user_id = $2`,
+            [phone || '', user.user_id]
+        );
+
+        // Keep in cache for polling endpoint resolution
+        verifiedCodesCache.add(cleanCode);
+
+        console.log(`✅ Click-to-Verify successful for user_id=${user.user_id} (${user.email}) with code ${cleanCode}`);
+        return res.status(200).json({ success: true, message: 'User verified' });
+    } catch (err) {
+        console.error("Verification code error:", err.message);
+        return res.status(500).json({ success: false, message: 'Server error verifying code' });
+    }
+});
+
+// GET /api/users/verification-status/:code - Check polling status for verification code
+router.get('/verification-status/:code', async (req, res) => {
+    const { code } = req.params;
+    if (!code) {
+        return res.status(400).json({ isVerified: false, error: 'Code parameter is required' });
+    }
+
+    try {
+        const cleanCode = code.trim().toUpperCase();
+
+        // 1. Check if a user with that verification_code exists (case-insensitive)
+        const userResult = await pool.query(
+            'SELECT is_verified FROM users WHERE UPPER(verification_code) = UPPER($1)',
+            [cleanCode]
+        );
+
+        if (userResult.rowCount > 0) {
+            // User exists with this active verification_code (meaning not yet verified)
+            return res.status(200).json({ isVerified: false });
+        }
+
+        // 2. If no user exists with that code (meaning it was verified and cleared)
+        return res.status(200).json({ isVerified: true });
+    } catch (err) {
+        console.error("Verification status polling error:", err.message);
+        return res.status(500).json({ isVerified: false, error: 'Server error checking status' });
     }
 });
 

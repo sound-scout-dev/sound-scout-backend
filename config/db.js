@@ -18,6 +18,14 @@ pool.on('connect', () => {
     console.log('🔗 Connected to the PostgreSQL database.');
 });
 
+// Auto-run schema migrations
+pool.query(`
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code VARCHAR(50);
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
+`).then(() => {
+    console.log('✅ User schema updated with verification_code and is_verified columns.');
+}).catch(err => console.error('⚠️ DB Migration notice:', err.message));
+
 pool.on('error', (err) => {
     console.error('❌ Unexpected error on idle client', err);
     process.exit(-1);
