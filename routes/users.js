@@ -175,10 +175,15 @@ router.post('/login', async (req, res) => {
         // Verification Enforcement: Block unverified accounts from logging in
         if (!user.is_verified) {
             console.warn(`🔒 Login attempt blocked for unverified user_id=${user.user_id} (${user.email})`);
+            const botPhone = await getBotPhone();
             return res.status(403).json({
                 message: 'Account not verified. Please complete WhatsApp verification before logging in.',
                 is_verified: false,
-                verificationCode: user.verification_code
+                email: user.email,
+                phone: user.phone,
+                role: user.role,
+                verificationCode: user.verification_code,
+                botPhone: botPhone
             });
         }
 
@@ -645,6 +650,99 @@ router.get('/verification-status/:code', async (req, res) => {
     } catch (err) {
         console.error("Verification status polling error:", err.message);
         return res.status(500).json({ isVerified: false, error: 'Server error checking status' });
+    }
+});
+
+// POST /api/users/forgot-password - Request password reset code via WhatsApp
+router.post('/forgot-password', async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+        return res.status(400).json({ error: 'Email address is required.' });
+    }
+
+    try {
+        const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (userResult.rowCount === 0) {
+            return res.status(404).json({ error: 'No account found with this email address.' });
+        }
+
+        const user = userResult.rows[0];
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let randStr = '';
+        for (let i = 0; i < 6; i++) {
+            randStr += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        const resetCode = `RESET-${randStr}`;
+
+        await pool.query(
+            'UPDATE users SET verification_code = $1 WHERE user_id = $2',
+            [resetCode, user.user_id]
+        );
+
+        const botPhone = await getBotPhone();
+
+        res.status(200).json({
+            success: true,
+            message: 'Password reset code generated.',
+            resetCode,
+            botPhone,
+            email: user.email,
+            phone: user.phone
+        });
+    } catch (err) {
+        console.error("Forgot password error:", err.message);
+        res.status(500).json({ error: 'Server error initiating password reset.' });
+    }
+});
+
+// POST /api/users/reset-password - Reset password after verifying code
+router.post('/reset-password', async (req, res) => {
+    const { email, code, newPassword } = req.body;
+
+    if (!email || !code || !newPassword) {
+        return res.status(400).json({ error: 'Email, verification code, and new password are required.' });
+    }
+
+    if (newPassword.length < 8) {
+        return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+    }
+
+    try {
+        const cleanCode = code.trim().toUpperCase();
+        const userResult = await pool.query(
+            'SELECT * FROM users WHERE email = $1',
+            [email]
+        );
+
+        if (userResult.rowCount === 0) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+
+        const user = userResult.rows[0];
+
+        // Check if code was verified (or matches)
+        const isVerified = verifiedCodesCache.has(cleanCode) || (user.verification_code && user.verification_code.toUpperCase() === cleanCode);
+        if (!isVerified && user.verification_code !== null) {
+            return res.status(400).json({ error: 'Verification code is invalid or has not been confirmed via WhatsApp yet.' });
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+        await pool.query(
+            'UPDATE users SET password_hash = $1, verification_code = NULL, is_verified = true WHERE user_id = $2',
+            [passwordHash, user.user_id]
+        );
+
+        verifiedCodesCache.delete(cleanCode);
+
+        console.log(`✅ Password reset successfully for user ${user.email}`);
+        res.status(200).json({
+            success: true,
+            message: 'Password reset successfully! You can now log in with your new password.'
+        });
+    } catch (err) {
+        console.error("Reset password error:", err.message);
+        res.status(500).json({ error: 'Server error resetting password.' });
     }
 });
 
