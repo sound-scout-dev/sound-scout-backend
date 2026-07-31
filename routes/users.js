@@ -557,14 +557,45 @@ router.post('/verify-code', async (req, res) => {
 
         const user = userResult.rows[0];
 
+        // Security check: Verify that the code is coming from the registered WhatsApp phone number
+        const normPhone = (p) => {
+            if (!p) return '';
+            let clean = String(p).split('@')[0].split(':')[0];
+            let digits = clean.replace(/\D/g, '');
+            if (digits.startsWith('0')) digits = '94' + digits.substring(1);
+            else if (digits.length === 9 && digits.startsWith('7')) digits = '94' + digits;
+            return digits;
+        };
+
+        const userNorm = normPhone(user.phone);
+        const incomingNorm = normPhone(phone);
+
+        console.log(`🔍 Verification Phone Check -> Registered User: "${user.phone}" (norm: ${userNorm}), Incoming Sender: "${phone}" (norm: ${incomingNorm})`);
+
+        if (!userNorm) {
+            console.warn(`🔒 Verification blocked: User ID ${user.user_id} has no registered phone number.`);
+            return res.status(400).json({ 
+                success: false, 
+                message: `No phone number registered for this account. Please register with a valid WhatsApp phone number.` 
+            });
+        }
+
+        if (!incomingNorm || userNorm !== incomingNorm) {
+            console.warn(`🔒 Phone mismatch blocked for user_id=${user.user_id}: registered (${userNorm}) vs sender (${incomingNorm})`);
+            return res.status(400).json({ 
+                success: false, 
+                message: `Verification code must be sent from your registered WhatsApp number.` 
+            });
+        }
+
         // Update user: set is_verified = true, clear verification_code = NULL
         await pool.query(
             `UPDATE users 
              SET is_verified = true, 
                  verification_code = NULL, 
-                 phone = CASE WHEN $1 <> '' THEN $1 ELSE phone END 
+                 phone = CASE WHEN phone IS NULL OR phone = '' THEN $1 ELSE phone END 
              WHERE user_id = $2`,
-            [phone || '', user.user_id]
+            [incomingNorm || '', user.user_id]
         );
 
         // Keep in cache for polling endpoint resolution
