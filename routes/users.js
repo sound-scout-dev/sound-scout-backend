@@ -41,14 +41,18 @@ router.post('/register', async (req, res) => {
         if (phone) {
             const otpMessage = `🔐 *SoundScout Verification*\n\nYour 6-digit OTP code for signing up is: *${otpCode}*.\nThis code will expire in 5 minutes.`;
 
+            const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
+            const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
+
             try {
-                await axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
-                    secret: process.env.WORKER_SECRET,
+                await axios.post(`${workerUrl}/api/send-message`, {
+                    secret: workerSecret,
                     phone: phone,
                     message: otpMessage
                 });
+                console.log(`✅ Sent WhatsApp OTP to ${phone}`);
             } catch (err) {
-                console.error("Error sending WhatsApp OTP:", err.message);
+                console.error("❌ Error sending WhatsApp OTP:", err.response ? err.response.data : err.message);
             }
         }
 
@@ -414,6 +418,55 @@ router.post('/verify-otp', async (req, res) => {
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error verifying OTP.' });
+    }
+});
+
+// POST /api/users/resend-otp - Resend 6-digit WhatsApp code
+router.post('/resend-otp', async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ error: 'Email is required.' });
+    }
+
+    try {
+        const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (userResult.rowCount === 0) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+
+        const user = userResult.rows[0];
+        if (!user.phone) {
+            return res.status(400).json({ error: 'No phone number associated with this account.' });
+        }
+
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins expiry
+
+        await pool.query(
+            'UPDATE users SET otp_code = $1, otp_expires_at = $2 WHERE user_id = $3',
+            [otpCode, otpExpiresAt, user.user_id]
+        );
+
+        const otpMessage = `🔐 *SoundScout Verification*\n\nYour new 6-digit OTP code is: *${otpCode}*.\nThis code will expire in 5 minutes.`;
+        const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
+        const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
+
+        try {
+            await axios.post(`${workerUrl}/api/send-message`, {
+                secret: workerSecret,
+                phone: user.phone,
+                message: otpMessage
+            });
+            console.log(`✅ Resent WhatsApp OTP to ${user.phone}`);
+        } catch (err) {
+            console.error("❌ Error resending WhatsApp OTP:", err.response ? err.response.data : err.message);
+        }
+
+        res.status(200).json({ message: 'A new OTP code has been sent to your WhatsApp number.' });
+    } catch (err) {
+        console.error("Resend OTP error:", err.message);
+        res.status(500).json({ error: 'Server error resending OTP.' });
     }
 });
 

@@ -178,9 +178,12 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
             
             if (vendor_phone) {
                 const message = `🎉 *SoundScout Bid Accepted!*\n\nDear *${vendor_name}*,\n\nWe are excited to inform you that your bid of *Rs. ${Number(proposed_price).toLocaleString()}* for the event *${event_type}* at *${location}* has been *ACCEPTED*!\n\nOrganizer details:\n👤 Name: *${organizer_name}*\n📞 Phone: *${organizer_phone || 'N/A'}*\n\nPlease log in to your SoundScout dashboard to coordinate further details.`;
+                const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
+                const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
+
                 try {
-                    await axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
-                        secret: process.env.WORKER_SECRET,
+                    await axios.post(`${workerUrl}/api/send-message`, {
+                        secret: workerSecret,
                         phone: vendor_phone,
                         message: message
                     });
