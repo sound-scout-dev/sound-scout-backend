@@ -656,12 +656,17 @@ router.get('/verification-status/:code', async (req, res) => {
 // POST /api/users/forgot-password - Request password reset code via WhatsApp
 router.post('/forgot-password', async (req, res) => {
     const { email } = req.body;
-    if (!email) {
+    if (!email || !email.trim()) {
         return res.status(400).json({ error: 'Email address is required.' });
     }
 
     try {
-        const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        const cleanEmail = email.trim();
+        const userResult = await pool.query(
+            'SELECT * FROM users WHERE LOWER(email) = LOWER($1)',
+            [cleanEmail]
+        );
+
         if (userResult.rowCount === 0) {
             return res.status(404).json({ error: 'No account found with this email address.' });
         }
@@ -679,7 +684,12 @@ router.post('/forgot-password', async (req, res) => {
             [resetCode, user.user_id]
         );
 
-        const botPhone = await getBotPhone();
+        let botPhone = '94703252870';
+        try {
+            botPhone = await getBotPhone();
+        } catch (phoneErr) {
+            console.warn("Could not resolve botPhone, using fallback:", phoneErr.message);
+        }
 
         res.status(200).json({
             success: true,
@@ -690,8 +700,8 @@ router.post('/forgot-password', async (req, res) => {
             phone: user.phone
         });
     } catch (err) {
-        console.error("Forgot password error:", err.message);
-        res.status(500).json({ error: 'Server error initiating password reset.' });
+        console.error("Forgot password error:", err.message, err.stack);
+        res.status(500).json({ error: 'Server error initiating password reset. Please try again.' });
     }
 });
 
