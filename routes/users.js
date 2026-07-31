@@ -16,6 +16,38 @@ function hashToken(token) {
     return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+// Helper: send via WhatsApp worker with automatic retries for 503 (worker reconnecting)
+async function sendWhatsAppWithRetry(phone, message, maxAttempts = 4) {
+    const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
+    const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
+    let lastErr;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            const resp = await axios.post(`${workerUrl}/api/send-message`, {
+                secret: workerSecret,
+                phone,
+                message
+            }, { timeout: 15000 });
+            console.log(`✅ WhatsApp message delivered to ${phone} (attempt ${attempt})`);
+            return resp.data;
+        } catch (err) {
+            lastErr = err;
+            const status = err.response?.status;
+            const errData = err.response?.data || err.message;
+            console.warn(`⚠️  WhatsApp send attempt ${attempt}/${maxAttempts} failed (status ${status}):`, errData);
+            if (status === 503 && attempt < maxAttempts) {
+                // Worker is reconnecting — wait and retry
+                const delayMs = attempt * 5000; // 5s, 10s, 15s
+                console.log(`⏳ Retrying in ${delayMs / 1000}s...`);
+                await new Promise(r => setTimeout(r, delayMs));
+            } else {
+                break; // non-503 error or max attempts reached
+            }
+        }
+    }
+    throw lastErr;
+}
+
 // POST /api/users/register - Create a new user with password hashing
 router.post('/register', async (req, res) => {
     const { name, email, role, region, password, phone } = req.body;
@@ -40,19 +72,10 @@ router.post('/register', async (req, res) => {
 
         if (phone) {
             const otpMessage = `🔐 *SoundScout Verification*\n\nYour 6-digit OTP code for signing up is: *${otpCode}*.\nThis code will expire in 5 minutes.`;
-
-            const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
-            const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
-
             try {
-                await axios.post(`${workerUrl}/api/send-message`, {
-                    secret: workerSecret,
-                    phone: phone,
-                    message: otpMessage
-                });
-                console.log(`✅ Sent WhatsApp OTP to ${phone}`);
+                await sendWhatsAppWithRetry(phone, otpMessage);
             } catch (err) {
-                console.error("❌ Error sending WhatsApp OTP:", err.response ? err.response.data : err.message);
+                console.error("❌ Error sending WhatsApp OTP after retries:", err.response?.data || err.message);
             }
         }
 
@@ -449,18 +472,11 @@ router.post('/resend-otp', async (req, res) => {
         );
 
         const otpMessage = `🔐 *SoundScout Verification*\n\nYour new 6-digit OTP code is: *${otpCode}*.\nThis code will expire in 5 minutes.`;
-        const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
-        const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
 
         try {
-            await axios.post(`${workerUrl}/api/send-message`, {
-                secret: workerSecret,
-                phone: user.phone,
-                message: otpMessage
-            });
-            console.log(`✅ Resent WhatsApp OTP to ${user.phone}`);
+            await sendWhatsAppWithRetry(user.phone, otpMessage);
         } catch (err) {
-            console.error("❌ Error resending WhatsApp OTP:", err.response ? err.response.data : err.message);
+            console.error("❌ Error resending WhatsApp OTP after retries:", err.response?.data || err.message);
         }
 
         res.status(200).json({ message: 'A new OTP code has been sent to your WhatsApp number.' });
