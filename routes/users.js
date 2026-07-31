@@ -557,14 +557,33 @@ router.post('/verify-code', async (req, res) => {
 
         const user = userResult.rows[0];
 
+        // Security check: Verify that the code is coming from the registered WhatsApp phone number
+        const normPhone = (p) => {
+            let n = String(p || '').replace(/\D/g, '');
+            if (n.startsWith('0')) n = '94' + n.substring(1);
+            else if (n.length === 9 && n.startsWith('7')) n = '94' + n;
+            return n;
+        };
+
+        const userNorm = normPhone(user.phone);
+        const incomingNorm = normPhone(phone);
+
+        if (userNorm && incomingNorm && userNorm !== incomingNorm) {
+            console.warn(`🔒 Phone mismatch for user_id=${user.user_id}: registered (${userNorm}) vs sender (${incomingNorm})`);
+            return res.status(400).json({ 
+                success: false, 
+                message: `Phone number mismatch. Verification code must be sent from the registered WhatsApp number.` 
+            });
+        }
+
         // Update user: set is_verified = true, clear verification_code = NULL
         await pool.query(
             `UPDATE users 
              SET is_verified = true, 
                  verification_code = NULL, 
-                 phone = CASE WHEN $1 <> '' THEN $1 ELSE phone END 
+                 phone = CASE WHEN phone IS NULL OR phone = '' THEN $1 ELSE phone END 
              WHERE user_id = $2`,
-            [phone || '', user.user_id]
+            [incomingNorm || '', user.user_id]
         );
 
         // Keep in cache for polling endpoint resolution
