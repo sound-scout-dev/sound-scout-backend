@@ -559,20 +559,32 @@ router.post('/verify-code', async (req, res) => {
 
         // Security check: Verify that the code is coming from the registered WhatsApp phone number
         const normPhone = (p) => {
-            let n = String(p || '').replace(/\D/g, '');
-            if (n.startsWith('0')) n = '94' + n.substring(1);
-            else if (n.length === 9 && n.startsWith('7')) n = '94' + n;
-            return n;
+            if (!p) return '';
+            let clean = String(p).split('@')[0].split(':')[0];
+            let digits = clean.replace(/\D/g, '');
+            if (digits.startsWith('0')) digits = '94' + digits.substring(1);
+            else if (digits.length === 9 && digits.startsWith('7')) digits = '94' + digits;
+            return digits;
         };
 
         const userNorm = normPhone(user.phone);
         const incomingNorm = normPhone(phone);
 
-        if (userNorm && incomingNorm && userNorm !== incomingNorm) {
-            console.warn(`🔒 Phone mismatch for user_id=${user.user_id}: registered (${userNorm}) vs sender (${incomingNorm})`);
+        console.log(`🔍 Verification Phone Check -> Registered User: "${user.phone}" (norm: ${userNorm}), Incoming Sender: "${phone}" (norm: ${incomingNorm})`);
+
+        if (!userNorm) {
+            console.warn(`🔒 Verification blocked: User ID ${user.user_id} has no registered phone number.`);
             return res.status(400).json({ 
                 success: false, 
-                message: `Phone number mismatch. Verification code must be sent from the registered WhatsApp number.` 
+                message: `No phone number registered for this account. Please register with a valid WhatsApp phone number.` 
+            });
+        }
+
+        if (!incomingNorm || userNorm !== incomingNorm) {
+            console.warn(`🔒 Phone mismatch blocked for user_id=${user.user_id}: registered (${userNorm}) vs sender (${incomingNorm})`);
+            return res.status(400).json({ 
+                success: false, 
+                message: `Verification code must be sent from your registered WhatsApp number.` 
             });
         }
 
