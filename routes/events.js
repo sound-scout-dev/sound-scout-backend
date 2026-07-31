@@ -50,12 +50,12 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
 
         const req_json = requirements ? JSON.stringify(requirements) : JSON.stringify(["Audio", "Lighting", "Staging"]);
         const env = environment || 'Indoor';
-        const district = extractDistrictFromLocation(location);
 
+        // District is initially null; Python AI service will resolve it via LLM location analysis during plan generation
         const result = await pool.query(
             `INSERT INTO events (organizer_id, name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location, district, event_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-            [organizer_id, name || null, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '', district, event_date || null]
+            [organizer_id, name || null, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '', null, event_date || null]
         );
         res.status(201).json({
             message: 'Event created, awaiting AI plan',
@@ -75,16 +75,29 @@ router.get('/open', authenticateUser, requireRole('vendor'), async (req, res) =>
             "SELECT region FROM users WHERE user_id = $1",
             [req.user.user_id]
         );
-        const region = vendorRes.rows[0]?.region;
+        const region = vendorRes.rows[0]?.region ? vendorRes.rows[0].region.trim() : '';
 
         let queryStr = "SELECT * FROM events WHERE status = 'bidding_open'";
         let queryParams = [];
 
-        if (region) {
+        if (region && region.toLowerCase() !== 'all') {
             const districts = region.split(',').map(d => d.trim()).filter(Boolean);
             if (districts.length > 0) {
                 const placeholders = districts.map((_, i) => `$${i + 1}`).join(', ');
-                queryStr += ` AND (district IS NULL OR district = '' OR district IN (${placeholders}) OR ${districts.map((_, i) => `location ILIKE $${districts.length + i + 1}`).join(' OR ')})`;
+                const ilikeConditions = districts.map((_, i) => `location ILIKE $${districts.length + i + 1}`).join(' OR ');
+
+                // Rule: Event is visible if:
+                // 1. District is NULL / empty / 'Unknown' (unidentified location -> open to ALL vendors)
+                // 2. District matches vendor's registered district
+                // 3. Location string matches vendor's district
+                queryStr += ` AND (
+                    district IS NULL OR 
+                    district = '' OR 
+                    LOWER(district) = 'unknown' OR 
+                    LOWER(district) = 'all' OR 
+                    district IN (${placeholders}) OR 
+                    (${ilikeConditions})
+                )`;
                 queryParams = [...districts, ...districts.map(d => `%${d}%`)];
             }
         }
@@ -174,12 +187,12 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
         }
 
         const aiData = await aiResponse.json();
-        const resolvedDistrict = aiData.resolved_district || 'Colombo';
+        let resolvedDistrict = aiData.resolved_district || null;
+        if (resolvedDistrict && (resolvedDistrict.toLowerCase() === 'unknown' || resolvedDistrict.toLowerCase() === 'none')) {
+            resolvedDistrict = null; // Unidentified location -> Visible to all vendors!
+        }
 
-        // Ensure we're pulling the plan correctly depending on your Flask app's response structure
-        const equipmentPlan = aiData.equipment_plan || aiData;
-
-        // 4. Update the database with the generated dual-plan options, keep status as draft, and save resolved district
+        // 4. Update the database with the generated dual-plan options, keep status as draft, and save AI resolved district
         const updateResult = await pool.query(
             `UPDATE events 
              SET ai_infrastructure_plan = $1, district = $2, status = 'draft' 

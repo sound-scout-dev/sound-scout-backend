@@ -23,9 +23,8 @@ pool.query(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code VARCHAR(50);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
     ALTER TABLE events ADD COLUMN IF NOT EXISTS district VARCHAR(255);
-    UPDATE events SET district = 'Colombo' WHERE district IS NULL OR district = '';
 `).then(() => {
-    console.log('✅ User and Event schemas updated with verification & district columns.');
+    console.log('✅ User and Event schemas verified.');
 }).catch(err => console.error('⚠️ DB Migration notice:', err.message));
 
 pool.on('error', (err) => {
