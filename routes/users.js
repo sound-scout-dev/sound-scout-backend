@@ -172,6 +172,16 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials.' });
         }
 
+        // Verification Enforcement: Block unverified accounts from logging in
+        if (!user.is_verified) {
+            console.warn(`🔒 Login attempt blocked for unverified user_id=${user.user_id} (${user.email})`);
+            return res.status(403).json({
+                message: 'Account not verified. Please complete WhatsApp verification before logging in.',
+                is_verified: false,
+                verificationCode: user.verification_code
+            });
+        }
+
         // Generate short-lived Access Token & long-lived Refresh Token
         const accessToken = jwt.sign(
             { user_id: user.user_id, email: user.email, role: user.role },
