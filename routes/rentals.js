@@ -191,7 +191,15 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
         });
 
         // Send automated WhatsApp notification to the vendor
-        if (item.vendor_phone) {
+        let targetVendorPhone = item.vendor_phone;
+        if (!targetVendorPhone && item.vendor_id) {
+            try {
+                const vRes = await pool.query('SELECT phone FROM users WHERE user_id = $1', [item.vendor_id]);
+                targetVendorPhone = vRes.rows[0]?.phone;
+            } catch (e) {}
+        }
+
+        if (targetVendorPhone) {
             try {
                 const cleanRenterPhone = renter?.phone ? String(renter.phone).replace(/\D/g, '') : '';
                 const organizerContactUrl = cleanRenterPhone ? `https://api.whatsapp.com/send?phone=${cleanRenterPhone}` : '#';
@@ -207,17 +215,17 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
                 const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
                 const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
 
-                // Try direct send first; if offline or first-time, queue message
+                console.log(`📡 Dispatching booking alert to WhatsApp worker for vendor phone: ${targetVendorPhone}`);
                 axios.post(`${workerUrl}/api/send-message`, {
                     secret: workerSecret,
-                    phone: item.vendor_phone,
+                    phone: targetVendorPhone,
                     message: vendorMsg
-                }, { timeout: 4000 }).catch(() => {
+                }, { timeout: 8000 }).catch(() => {
                     return axios.post(`${workerUrl}/api/queue-otp`, {
                         secret: workerSecret,
-                        phone: item.vendor_phone,
+                        phone: targetVendorPhone,
                         message: vendorMsg
-                    }, { timeout: 4000 });
+                    }, { timeout: 8000 });
                 }).catch(e => console.warn("Could not dispatch WhatsApp vendor alert:", e.message));
             } catch (waErr) {
                 console.warn("Could not process WhatsApp vendor notification:", waErr.message);
@@ -228,12 +236,34 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
             message: 'Rental booking confirmed!',
             booking: newBooking,
             remainingQty: newQty,
-            vendorPhone: item.vendor_phone,
+            vendorPhone: targetVendorPhone,
             vendorName: item.vendor_name
         });
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error confirming rental booking.' });
+    }
+});
+
+// GET /api/rentals/my-bookings - Fetch confirmed bookings for vendor or organizer
+router.get('/my-bookings', authenticateUser, async (req, res) => {
+    const userId = req.user.user_id;
+
+    try {
+        const result = await pool.query(
+            `SELECT b.*, r.equipment_summary, r.vendor_name, u.phone AS vendor_phone
+             FROM rental_bookings b
+             JOIN rental_items r ON b.item_id = r.item_id
+             LEFT JOIN users u ON r.vendor_id = u.user_id
+             WHERE b.renter_id = $1 OR r.vendor_id = $1
+             ORDER BY b.created_at DESC`,
+            [userId]
+        );
+
+        res.status(200).json(result.rows);
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error fetching bookings.' });
     }
 });
 
