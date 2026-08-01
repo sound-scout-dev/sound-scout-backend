@@ -35,9 +35,14 @@ router.get('/stream', (req, res) => {
 });
 
 function normPhone(phone) {
-    let n = String(phone || '').replace(/\D/g, '');
+    const str = String(phone || '');
+    if (!str || str === 'null' || str === 'undefined') return null;
+    if (str.includes('@lid')) return null;
+    let n = str.replace(/\D/g, '');
+    if (n.length >= 14) return null;  // Baileys LID — reject
     if (n.startsWith('0')) n = '94' + n.substring(1);
     else if (n.length === 9 && n.startsWith('7')) n = '94' + n;
+    if (n.length < 9 || n.length > 13) return null;
     return n;
 }
 
