@@ -23,6 +23,8 @@ pool.query(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code VARCHAR(50);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
     ALTER TABLE events ADD COLUMN IF NOT EXISTS district VARCHAR(255);
+    -- Clear any Baileys WhatsApp LIDs (15-digit internal IDs) stored as phone numbers
+    UPDATE users SET phone = NULL WHERE phone IS NOT NULL AND phone ~ '^[0-9]{14,}$';
     UPDATE users SET phone = '0703252870' WHERE (phone IS NULL OR phone = '') AND LOWER(role) = 'vendor';
     UPDATE users SET phone = '0711475700' WHERE (phone IS NULL OR phone = '') AND LOWER(role) = 'organizer';
     UPDATE rental_items SET qty = 2 WHERE qty <= 0 OR qty IS NULL;
