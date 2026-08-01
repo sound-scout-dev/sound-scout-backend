@@ -23,8 +23,36 @@ pool.query(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code VARCHAR(50);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
     ALTER TABLE events ADD COLUMN IF NOT EXISTS district VARCHAR(255);
+
+    CREATE TABLE IF NOT EXISTS rental_items (
+        item_id SERIAL PRIMARY KEY,
+        vendor_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+        vendor_name VARCHAR(255),
+        equipment_summary TEXT NOT NULL,
+        price_per_day NUMERIC NOT NULL,
+        qty INT DEFAULT 1,
+        category VARCHAR(100) DEFAULT 'Audio',
+        location VARCHAR(255),
+        photo_url TEXT,
+        availability VARCHAR(50) DEFAULT 'now',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS rental_bookings (
+        booking_id SERIAL PRIMARY KEY,
+        item_id INT REFERENCES rental_items(item_id) ON DELETE CASCADE,
+        renter_id INT REFERENCES users(user_id) ON DELETE SET NULL,
+        renter_name VARCHAR(255),
+        qty_booked INT DEFAULT 1,
+        rental_days INT DEFAULT 1,
+        total_price NUMERIC NOT NULL,
+        deposit_paid NUMERIC NOT NULL,
+        payment_mode VARCHAR(100) DEFAULT '50% Advance Escrow Deposit',
+        status VARCHAR(50) DEFAULT 'confirmed',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 `).then(() => {
-    console.log('✅ User and Event schemas verified.');
+    console.log('✅ User, Event, and Rental schemas verified.');
 }).catch(err => console.error('⚠️ DB Migration notice:', err.message));
 
 pool.on('error', (err) => {

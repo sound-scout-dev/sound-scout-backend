@@ -696,11 +696,11 @@ router.post('/forgot-password', async (req, res) => {
             [resetCode, user.user_id]
         );
 
-        let botPhone = '94703252870';
+        let botPhone = '';
         try {
             botPhone = await getBotPhone();
         } catch (phoneErr) {
-            console.warn("Could not resolve botPhone, using fallback:", phoneErr.message);
+            console.warn("Could not resolve botPhone:", phoneErr.message);
         }
 
         res.status(200).json({
