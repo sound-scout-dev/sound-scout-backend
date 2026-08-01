@@ -600,14 +600,15 @@ router.post('/verify-code', async (req, res) => {
 
         const userNorm = normPhone(user.phone);
         const incomingNorm = normPhone(phone);
+        const isLidSender = incomingNorm.length >= 14 || incomingNorm.startsWith('63415') || incomingNorm.startsWith('25157');
 
         console.log(`🔍 Verification Phone Check -> Registered User: "${user.phone}" (norm: "${userNorm}"), Incoming Sender: "${phone}" (norm: "${incomingNorm}")`);
 
         const isPhoneMatched = (userNorm === incomingNorm) || 
                               (userNorm.length >= 9 && incomingNorm.length >= 9 && userNorm.slice(-9) === incomingNorm.slice(-9));
 
-        // If user registered with a phone number, enforce matching
-        if (userNorm && incomingNorm && !isPhoneMatched) {
+        // If user registered with a phone number, enforce matching UNLESS sender is a WhatsApp LID device identifier
+        if (userNorm && incomingNorm && !isLidSender && !isPhoneMatched) {
             console.warn(`🔒 Phone mismatch for user_id=${user.user_id}: registered "${user.phone}" (${userNorm}) vs sender "${phone}" (${incomingNorm})`);
             return res.status(400).json({ 
                 success: false, 
@@ -616,13 +617,14 @@ router.post('/verify-code', async (req, res) => {
         }
 
         // Update user: set is_verified = true, clear verification_code = NULL
+        const validCleanPhone = (incomingNorm && !isLidSender) ? incomingNorm : '';
         await pool.query(
             `UPDATE users 
              SET is_verified = true, 
                  verification_code = NULL, 
-                 phone = CASE WHEN phone IS NULL OR phone = '' THEN $1 ELSE phone END 
+                 phone = CASE WHEN (phone IS NULL OR phone = '') AND $1 != '' THEN $1 ELSE phone END 
              WHERE user_id = $2`,
-            [incomingNorm || '', user.user_id]
+            [validCleanPhone, user.user_id]
         );
 
         // Keep in cache for polling endpoint resolution
@@ -646,15 +648,21 @@ router.get('/verification-status/:code', async (req, res) => {
     try {
         const cleanCode = code.trim().toUpperCase();
 
+        // 0. Check in-memory verified cache
+        if (verifiedCodesCache.has(cleanCode)) {
+            return res.status(200).json({ isVerified: true });
+        }
+
         // 1. Check if a user with that verification_code exists (case-insensitive)
         const userResult = await pool.query(
             'SELECT is_verified FROM users WHERE UPPER(verification_code) = UPPER($1)',
             [cleanCode]
         );
 
-        if (userResult.rowCount > 0) {
+        if (userResult.rows.length > 0) {
             // User exists with this active verification_code (meaning not yet verified)
-            return res.status(200).json({ isVerified: false });
+            const isVer = userResult.rows[0].is_verified;
+            return res.status(200).json({ isVerified: Boolean(isVer) });
         }
 
         // 2. If no user exists with that code (meaning it was verified and cleared)
