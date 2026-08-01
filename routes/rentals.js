@@ -194,7 +194,7 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
         if (item.vendor_phone) {
             try {
                 const cleanRenterPhone = renter?.phone ? String(renter.phone).replace(/\D/g, '') : '';
-                const organizerContactUrl = cleanRenterPhone ? `https://wa.me/${cleanRenterPhone}` : '#';
+                const organizerContactUrl = cleanRenterPhone ? `https://api.whatsapp.com/send?phone=${cleanRenterPhone}` : '#';
                 
                 const vendorMsg = `🎉 *New Instant Rental Booking!*\n\n` +
                     `*Item:* ${item.equipment_summary}\n` +
@@ -205,12 +205,22 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
                     `📲 *Contact Organizer on WhatsApp:* ${organizerContactUrl}`;
 
                 const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
-                await axios.post(`${workerUrl}/api/send-otp`, {
+                const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
+
+                // Try direct send first; if offline or first-time, queue message
+                axios.post(`${workerUrl}/api/send-message`, {
+                    secret: workerSecret,
                     phone: item.vendor_phone,
-                    otpMessage: vendorMsg
-                }, { timeout: 4000 });
+                    message: vendorMsg
+                }, { timeout: 4000 }).catch(() => {
+                    return axios.post(`${workerUrl}/api/queue-otp`, {
+                        secret: workerSecret,
+                        phone: item.vendor_phone,
+                        message: vendorMsg
+                    }, { timeout: 4000 });
+                }).catch(e => console.warn("Could not dispatch WhatsApp vendor alert:", e.message));
             } catch (waErr) {
-                console.warn("Could not send WhatsApp vendor notification:", waErr.message);
+                console.warn("Could not process WhatsApp vendor notification:", waErr.message);
             }
         }
 
