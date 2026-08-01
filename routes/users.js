@@ -113,20 +113,27 @@ router.post('/register', async (req, res) => {
 
 // Helper to resolve the active WhatsApp bot phone number
 async function getBotPhone() {
-    let raw = String(process.env.WHATSAPP_BOT_PHONE || '').replace(/\D/g, '');
-    if (raw && raw.length >= 9 && !raw.includes('X')) {
-        return raw;
-    }
+    // 1. Query the live worker endpoint first to get the active connected bot number
     try {
         const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
-        const resp = await axios.get(`${workerUrl}/`, { timeout: 4000 });
+        const resp = await axios.get(`${workerUrl}/`, { timeout: 3500 });
         if (resp.data && resp.data.botPhone) {
-            return resp.data.botPhone.replace(/\D/g, '');
+            const clean = String(resp.data.botPhone).replace(/\D/g, '');
+            if (clean.length >= 9) {
+                return clean;
+            }
         }
     } catch (e) {
-        console.warn("Could not query worker for botPhone:", e.message);
+        console.warn("Could not query worker for active botPhone:", e.message);
     }
-    return '94703252870';
+
+    // 2. Fall back to environment variable if set and valid
+    let raw = String(process.env.WHATSAPP_BOT_PHONE || '').replace(/\D/g, '');
+    if (raw && raw.length >= 9 && !raw.includes('X') && raw !== '94703252870') {
+        return raw;
+    }
+
+    return '';
 }
 
         const botPhone = await getBotPhone();
@@ -175,7 +182,13 @@ router.post('/login', async (req, res) => {
         // Verification Enforcement: Block unverified accounts from logging in
         if (!user.is_verified) {
             console.warn(`🔒 Login attempt blocked for unverified user_id=${user.user_id} (${user.email})`);
-            const botPhone = await getBotPhone();
+            let botPhone = '';
+            try {
+                botPhone = await getBotPhone();
+            } catch (phoneErr) {
+                console.warn("Could not query worker for botPhone during login:", phoneErr.message);
+            }
+
             return res.status(403).json({
                 message: 'Account not verified. Please complete WhatsApp verification before logging in.',
                 is_verified: false,
@@ -575,31 +588,27 @@ router.post('/verify-code', async (req, res) => {
         // Security check: Verify that the code is coming from the registered WhatsApp phone number
         const normPhone = (p) => {
             if (!p) return '';
-            let clean = String(p).split('@')[0].split(':')[0];
+            let clean = String(p).split('@')[0].split(':')[0].trim();
             let digits = clean.replace(/\D/g, '');
-            if (digits.startsWith('0')) digits = '94' + digits.substring(1);
-            else if (digits.length === 9 && digits.startsWith('7')) digits = '94' + digits;
+            if (digits.startsWith('0') && digits.length === 10) {
+                digits = '94' + digits.substring(1);
+            } else if (digits.length === 9 && digits.startsWith('7')) {
+                digits = '94' + digits;
+            }
             return digits;
         };
 
         const userNorm = normPhone(user.phone);
         const incomingNorm = normPhone(phone);
 
-        console.log(`🔍 Verification Phone Check -> Registered User: "${user.phone}" (norm: ${userNorm}), Incoming Sender: "${phone}" (norm: ${incomingNorm})`);
+        console.log(`🔍 Verification Phone Check -> Registered User: "${user.phone}" (norm: "${userNorm}"), Incoming Sender: "${phone}" (norm: "${incomingNorm}")`);
 
-        if (!userNorm) {
-            console.warn(`🔒 Verification blocked: User ID ${user.user_id} has no registered phone number.`);
+        // If user registered with a phone number, enforce matching
+        if (userNorm && incomingNorm && userNorm !== incomingNorm) {
+            console.warn(`🔒 Phone mismatch for user_id=${user.user_id}: registered "${user.phone}" (${userNorm}) vs sender "${phone}" (${incomingNorm})`);
             return res.status(400).json({ 
                 success: false, 
-                message: `No phone number registered for this account. Please register with a valid WhatsApp phone number.` 
-            });
-        }
-
-        if (!incomingNorm || userNorm !== incomingNorm) {
-            console.warn(`🔒 Phone mismatch blocked for user_id=${user.user_id}: registered (${userNorm}) vs sender (${incomingNorm})`);
-            return res.status(400).json({ 
-                success: false, 
-                message: `Verification code must be sent from your registered WhatsApp number.` 
+                message: `Verification code must be sent from your registered WhatsApp number (${user.phone}).` 
             });
         }
 
