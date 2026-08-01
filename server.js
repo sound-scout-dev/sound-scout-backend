@@ -43,7 +43,8 @@ app.use(cors({
     },
     credentials: true
 }));
-app.use(express.json()); // Parses incoming JSON requests
+app.use(express.json({ limit: '10mb' })); // Parses incoming JSON requests up to 10MB
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use((req, res, next) => {
     console.log(`[${new Date().toLocaleTimeString()}] 🚀 ${req.method} ${req.originalUrl || req.url}`);
     next();
