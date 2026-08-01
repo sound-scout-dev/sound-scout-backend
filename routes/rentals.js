@@ -34,13 +34,20 @@ router.get('/stream', (req, res) => {
     });
 });
 
+function normPhone(phone) {
+    let n = String(phone || '').replace(/\D/g, '');
+    if (n.startsWith('0')) n = '94' + n.substring(1);
+    else if (n.length === 9 && n.startsWith('7')) n = '94' + n;
+    return n;
+}
+
 // GET /api/rentals - Fetch all active instant rental items
 router.get('/', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     const { category, location } = req.query;
 
     try {
-        let queryStr = 'SELECT r.*, u.phone AS vendor_phone FROM rental_items r LEFT JOIN users u ON r.vendor_id = u.user_id WHERE r.qty > 0';
+        let queryStr = 'SELECT r.*, u.phone AS vendor_phone FROM rental_items r LEFT JOIN users u ON r.vendor_id = u.user_id WHERE 1=1';
         let queryParams = [];
 
         if (category && category !== 'All') {
@@ -67,9 +74,9 @@ router.get('/', async (req, res) => {
             location: row.location,
             photoUrl: row.photo_url,
             photos: row.photo_url ? [row.photo_url] : [],
-            availability: row.availability || 'now',
+            availability: row.qty <= 0 ? 'booked' : (row.availability || 'now'),
             rating: 5.0,
-            vendorPhone: row.vendor_phone
+            vendorPhone: normPhone(row.vendor_phone)
         }));
 
         res.status(200).json(formattedRows);
@@ -89,9 +96,10 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
     }
 
     try {
-        const vendorRes = await pool.query('SELECT name, region FROM users WHERE user_id = $1', [vendor_id]);
+        const vendorRes = await pool.query('SELECT name, region, phone FROM users WHERE user_id = $1', [vendor_id]);
         const vendorName = vendorRes.rows[0]?.name || 'Rental Vendor';
         const location = vendorRes.rows[0]?.region || 'Colombo';
+        const vendorPhone = normPhone(vendorRes.rows[0]?.phone);
 
         const result = await pool.query(
             `INSERT INTO rental_items (vendor_id, vendor_name, equipment_summary, price_per_day, qty, category, location, photo_url)
@@ -120,7 +128,8 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
             location: newItem.location,
             photoUrl: newItem.photo_url,
             photos: newItem.photo_url ? [newItem.photo_url] : [],
-            availability: 'now'
+            availability: 'now',
+            vendorPhone: vendorPhone
         };
 
         // Broadcast to connected web socket/SSE clients
@@ -146,7 +155,7 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
             [itemId]
         );
 
-        if (itemResult.rowCount === 0) {
+        if (itemResult.rows.length === 0) {
             return res.status(404).json({ error: 'Rental item not found.' });
         }
 
@@ -188,17 +197,19 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
         });
 
         // Send automated WhatsApp notification to the vendor
-        let targetVendorPhone = item.vendor_phone;
-        if (!targetVendorPhone && item.vendor_id) {
+        let rawPhone = item.vendor_phone;
+        if (!rawPhone && item.vendor_id) {
             try {
                 const vRes = await pool.query('SELECT phone FROM users WHERE user_id = $1', [item.vendor_id]);
-                targetVendorPhone = vRes.rows[0]?.phone;
+                rawPhone = vRes.rows[0]?.phone;
             } catch (e) {}
         }
 
+        const targetVendorPhone = normPhone(rawPhone);
+
         if (targetVendorPhone) {
             try {
-                const cleanRenterPhone = renter?.phone ? String(renter.phone).replace(/\D/g, '') : '';
+                const cleanRenterPhone = renter?.phone ? normPhone(renter.phone) : '';
                 const organizerContactUrl = cleanRenterPhone ? `https://api.whatsapp.com/send?phone=${cleanRenterPhone}` : '#';
                 
                 const vendorMsg = `🎉 *New Instant Rental Booking!*\n\n` +
@@ -235,7 +246,7 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
             remainingQty: newQty,
             vendorPhone: targetVendorPhone,
             vendorName: item.vendor_name
-        });
+        });      });
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error confirming rental booking.' });
