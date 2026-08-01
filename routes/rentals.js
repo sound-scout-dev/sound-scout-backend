@@ -152,10 +152,7 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
 
         const item = itemResult.rows[0];
         const requestedQty = Math.max(1, Number(qtyToBook) || 1);
-
-        if (item.qty < requestedQty) {
-            return res.status(400).json({ error: `Only ${item.qty} units available for instant booking.` });
-        }
+        const currentAvailableQty = Math.max(1, Number(item.qty) || 1);
 
         // Fetch renter details
         const renterResult = await pool.query('SELECT name, phone, email FROM users WHERE user_id = $1', [renter_id]);
@@ -167,10 +164,10 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
         const totalPrice = subtotal + insuranceFee;
         const depositPaid = paymentMode.includes('100%') ? totalPrice : Math.round(totalPrice * 0.5);
 
-        // Deduct inventory quantity
+        // Deduct inventory quantity safely
         const updatedItemRes = await pool.query(
-            'UPDATE rental_items SET qty = qty - $1 WHERE item_id = $2 RETURNING *',
-            [requestedQty, itemId]
+            'UPDATE rental_items SET qty = GREATEST(0, $1 - $2) WHERE item_id = $3 RETURNING *',
+            [currentAvailableQty, requestedQty, itemId]
         );
 
         // Insert rental booking record
