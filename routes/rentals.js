@@ -36,10 +36,11 @@ router.get('/stream', (req, res) => {
 
 // GET /api/rentals - Fetch all active instant rental items
 router.get('/', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     const { category, location } = req.query;
 
     try {
-        let queryStr = 'SELECT r.*, u.phone AS vendor_phone FROM rental_items r JOIN users u ON r.vendor_id = u.user_id WHERE r.qty > 0';
+        let queryStr = 'SELECT r.*, u.phone AS vendor_phone FROM rental_items r LEFT JOIN users u ON r.vendor_id = u.user_id WHERE r.qty > 0';
         let queryParams = [];
 
         if (category && category !== 'All') {
