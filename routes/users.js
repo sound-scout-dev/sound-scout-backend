@@ -603,8 +603,11 @@ router.post('/verify-code', async (req, res) => {
 
         console.log(`🔍 Verification Phone Check -> Registered User: "${user.phone}" (norm: "${userNorm}"), Incoming Sender: "${phone}" (norm: "${incomingNorm}")`);
 
+        const isPhoneMatched = (userNorm === incomingNorm) || 
+                              (userNorm.length >= 9 && incomingNorm.length >= 9 && userNorm.slice(-9) === incomingNorm.slice(-9));
+
         // If user registered with a phone number, enforce matching
-        if (userNorm && incomingNorm && userNorm !== incomingNorm) {
+        if (userNorm && incomingNorm && !isPhoneMatched) {
             console.warn(`🔒 Phone mismatch for user_id=${user.user_id}: registered "${user.phone}" (${userNorm}) vs sender "${phone}" (${incomingNorm})`);
             return res.status(400).json({ 
                 success: false, 
