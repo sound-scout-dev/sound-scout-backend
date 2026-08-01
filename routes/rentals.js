@@ -246,7 +246,7 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
             remainingQty: newQty,
             vendorPhone: targetVendorPhone,
             vendorName: item.vendor_name
-        });      });
+        });
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error confirming rental booking.' });
