@@ -32,7 +32,7 @@ const authenticateUser = (req, res, next) => {
 
 const requireRole = (role) => {
     return (req, res, next) => {
-        if (!req.user || req.user.role !== role) {
+        if (!req.user || !req.user.role || req.user.role.toLowerCase() !== role.toLowerCase()) {
             return res.status(403).json({ error: `Access forbidden. Requires '${role}' role.` });
         }
         next();
