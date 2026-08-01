@@ -259,16 +259,26 @@ router.get('/my-bookings', authenticateUser, async (req, res) => {
 
     try {
         const result = await pool.query(
-            `SELECT b.*, r.equipment_summary, r.vendor_name, u.phone AS vendor_phone
+            `SELECT b.*, r.equipment_summary, r.vendor_name, 
+                    u_vendor.phone AS vendor_phone, 
+                    u_renter.phone AS renter_phone, 
+                    u_renter.email AS renter_email
              FROM rental_bookings b
              JOIN rental_items r ON b.item_id = r.item_id
-             LEFT JOIN users u ON r.vendor_id = u.user_id
+             LEFT JOIN users u_vendor ON r.vendor_id = u_vendor.user_id
+             LEFT JOIN users u_renter ON b.renter_id = u_renter.user_id
              WHERE b.renter_id = $1 OR r.vendor_id = $1
              ORDER BY b.created_at DESC`,
             [userId]
         );
 
-        res.status(200).json(result.rows);
+        const formattedBookings = result.rows.map(b => ({
+            ...b,
+            vendor_phone: normPhone(b.vendor_phone || '0703252870'),
+            renter_phone: normPhone(b.renter_phone || '0703252870')
+        }));
+
+        res.status(200).json(formattedBookings);
     } catch (err) {
         console.error(err.message);
         res.status(500).json({ error: 'Server error fetching bookings.' });

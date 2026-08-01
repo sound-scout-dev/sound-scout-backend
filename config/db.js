@@ -23,6 +23,7 @@ pool.query(`
     ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_code VARCHAR(50);
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
     ALTER TABLE events ADD COLUMN IF NOT EXISTS district VARCHAR(255);
+    UPDATE rental_items SET qty = 2 WHERE qty <= 0 OR qty IS NULL;
 
     CREATE TABLE IF NOT EXISTS rental_items (
         item_id SERIAL PRIMARY KEY,
