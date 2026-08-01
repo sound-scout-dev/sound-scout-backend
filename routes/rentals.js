@@ -68,6 +68,7 @@ router.get('/', async (req, res) => {
             photoUrl: row.photo_url,
             photos: row.photo_url ? [row.photo_url] : [],
             availability: row.availability || 'now',
+            rating: 5.0,
             vendorPhone: row.vendor_phone
         }));
 
