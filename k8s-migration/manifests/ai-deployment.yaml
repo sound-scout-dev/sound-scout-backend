@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sound-scout-ai
+  namespace: default
+  labels:
+    app: sound-scout-ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sound-scout-ai
+  template:
+    metadata:
+      labels:
+        app: sound-scout-ai
+    spec:
+      containers:
+        - name: ai-service
+          image: gcr.io/sound-scout-project/sound-scout-ai:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: sound-scout-config
+                  key: AI_PORT
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: sound-scout-secrets
+                  key: GEMINI_API_KEY
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sound-scout-ai
+  namespace: default
+spec:
+  selector:
+    app: sound-scout-ai
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

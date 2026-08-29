@@ -1,0 +1,19 @@
+# Dependency directories
+node_modules/
+
+#personal documents
+document/
+
+# Environment variables
+.env
+
+# Optional: Ignore Mac system files if any teammates use macOS
+.DS_Store
+
+.wwebjs_auth/
+.wwebjs_cache/
+*.lock
+SingletonLock
+
+# Real k8s secrets (template lives in k8s-migration/manifests/secrets.yaml)
+k8s-migration/manifests/secrets.local.yaml

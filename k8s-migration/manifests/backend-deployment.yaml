@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sound-scout-backend
+  namespace: default
+  labels:
+    app: sound-scout-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sound-scout-backend
+  template:
+    metadata:
+      labels:
+        app: sound-scout-backend
+    spec:
+      containers:
+        - name: backend
+          image: gcr.io/sound-scout-project/sound-scout-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: sound-scout-config
+                  key: BACKEND_PORT
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: sound-scout-secrets
+                  key: DATABASE_URL
+            - name: WHATSAPP_WORKER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: sound-scout-config
+                  key: WHATSAPP_WORKER_URL
+            - name: WORKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sound-scout-secrets
+                  key: WORKER_SECRET
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sound-scout-backend
+  namespace: default
+spec:
+  selector:
+    app: sound-scout-backend
+  ports:
+    - protocol: TCP
+      port: 5000
+      targetPort: 5000
+  type: ClusterIP

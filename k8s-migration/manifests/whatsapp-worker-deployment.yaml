@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sound-scout-whatsapp-worker
+  namespace: default
+  labels:
+    app: sound-scout-whatsapp-worker
+spec:
+  replicas: 1 # Strict requirement to avoid duplicate WhatsApp connections
+  strategy:
+    type: Recreate # Clean teardown and mount for single persistent volume
+  selector:
+    matchLabels:
+      app: sound-scout-whatsapp-worker
+  template:
+    metadata:
+      labels:
+        app: sound-scout-whatsapp-worker
+    spec:
+      containers:
+        - name: whatsapp-worker
+          image: gcr.io/sound-scout-project/sound-scout-whatsapp-worker:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4000
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: sound-scout-config
+                  key: WORKER_PORT
+            - name: MAIN_BACKEND_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: sound-scout-config
+                  key: MAIN_BACKEND_URL
+            - name: AI_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: sound-scout-config
+                  key: AI_SERVICE_URL
+            - name: WORKER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sound-scout-secrets
+                  key: WORKER_SECRET
+          volumeMounts:
+            - name: auth-info-volume
+              mountPath: /app/baileys_auth_info
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 4000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 4000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: auth-info-volume
+          persistentVolumeClaim:
+            claimName: whatsapp-worker-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sound-scout-whatsapp-worker
+  namespace: default
+spec:
+  selector:
+    app: sound-scout-whatsapp-worker
+  ports:
+    - protocol: TCP
+      port: 4000
+      targetPort: 4000
+  type: ClusterIP
