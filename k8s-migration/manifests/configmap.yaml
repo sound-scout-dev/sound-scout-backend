@@ -9,4 +9,4 @@ data:
   AI_PORT: "8000"
   WHATSAPP_WORKER_URL: "http://sound-scout-whatsapp-worker:4000"
   MAIN_BACKEND_URL: "http://sound-scout-backend:5000"
-  AI_SERVICE_URL: "http://sound-scout-ai:8000"
+  AI_SERVICE_URL: "http://sound-scout-ai:8000/api/generate"

@@ -5,8 +5,8 @@ set -euo pipefail
 # 1. SETUP ENVIRONMENT VARIABLES
 # ==============================================================================
 # Replace these values with your actual GCP details
-export GCP_PROJECT_ID="your-gcp-project-id"
-export GCP_REGION="us-central1"
+export GCP_PROJECT_ID="sound-scout-prod-001"
+export GCP_REGION="asia-southeast1"
 export GKE_CLUSTER_NAME="sound-scout-cluster"
 export GAR_REPO_NAME="sound-scout-repo"
 
@@ -31,14 +31,14 @@ gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 # 3. TAG AND PUSH IMAGES TO GCP ARTIFACT REGISTRY
 # ==============================================================================
 echo "Tagging Docker images..."
-sudo docker tag sound-scout-backend:latest "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-backend:latest"
-sudo docker tag sound-scout-whatsapp-worker:latest "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-whatsapp-worker:latest"
-sudo docker tag sound-scout-ai:latest "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-ai:latest"
+docker tag sound-scout-backend:latest "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-backend:latest"
+docker tag sound-scout-whatsapp-worker:latest "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-whatsapp-worker:latest"
+docker tag sound-scout-ai:latest "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-ai:latest"
 
 echo "Pushing images to GCP..."
-sudo docker push "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-backend:latest"
-sudo docker push "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-whatsapp-worker:latest"
-sudo docker push "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-ai:latest"
+docker push "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-backend:latest"
+docker push "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-whatsapp-worker:latest"
+docker push "${GCP_REGION}-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/sound-scout-ai:latest"
 
 # ==============================================================================
 # 4. CONNECT KUBECTL TO GKE CLUSTER

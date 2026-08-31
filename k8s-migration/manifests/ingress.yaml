@@ -1,0 +1,44 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: sound-scout-cert
+  namespace: default
+spec:
+  domains:
+    - api.8.232.255.9.nip.io
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sound-scout-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: sound-scout-ip
+    networking.gke.io/managed-certificates: sound-scout-cert
+spec:
+  rules:
+    - host: api.8.232.255.9.nip.io
+      http:
+        paths:
+          - path: /api/ai-voice
+            pathType: Prefix
+            backend:
+              service:
+                name: sound-scout-ai
+                port:
+                  number: 8000
+          - path: /api/ai-image
+            pathType: Prefix
+            backend:
+              service:
+                name: sound-scout-ai
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: sound-scout-backend
+                port:
+                  number: 5000

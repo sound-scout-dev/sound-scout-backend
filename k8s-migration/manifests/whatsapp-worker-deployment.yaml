@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
         - name: whatsapp-worker
-          image: gcr.io/sound-scout-project/sound-scout-whatsapp-worker:latest
-          imagePullPolicy: IfNotPresent
+          image: asia-southeast1-docker.pkg.dev/sound-scout-prod-001/sound-scout-repo/sound-scout-whatsapp-worker:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 4000
           env:

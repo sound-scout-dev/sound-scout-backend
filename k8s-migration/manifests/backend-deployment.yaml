@@ -17,8 +17,8 @@ spec:
     spec:
       containers:
         - name: backend
-          image: gcr.io/sound-scout-project/sound-scout-backend:latest
-          imagePullPolicy: IfNotPresent
+          image: asia-southeast1-docker.pkg.dev/sound-scout-prod-001/sound-scout-repo/sound-scout-backend:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 5000
           env:
@@ -39,6 +39,11 @@ spec:
                 configMapKeyRef:
                   name: sound-scout-config
                   key: WHATSAPP_WORKER_URL
+            - name: AI_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: sound-scout-config
+                  key: AI_SERVICE_URL
             - name: WORKER_SECRET
               valueFrom:
                 secretKeyRef:
@@ -69,6 +74,9 @@ kind: Service
 metadata:
   name: sound-scout-backend
   namespace: default
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/backend-config: '{"default": "sound-scout-long-timeout"}'
 spec:
   selector:
     app: sound-scout-backend
