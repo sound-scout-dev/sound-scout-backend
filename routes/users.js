@@ -614,15 +614,19 @@ router.post('/verify-code', async (req, res) => {
             });
         }
 
-        // Update user: set is_verified = true, clear verification_code = NULL
+        // Update user: set is_verified = true, mark verification_code as confirmed.
+        // Stored as "CONFIRMED:<code>" rather than cleared to NULL so that /reset-password can
+        // check confirmation straight from Postgres (shared across all backend replicas) instead
+        // of relying only on this pod's in-memory verifiedCodesCache, which a later request could
+        // easily land on a different pod than the one that processed this WhatsApp confirmation.
         const validCleanPhone = (incomingNorm && !isLidSender) ? incomingNorm : '';
         await pool.query(
-            `UPDATE users 
-             SET is_verified = true, 
-                 verification_code = NULL, 
-                 phone = CASE WHEN (phone IS NULL OR phone = '') AND $1 != '' THEN $1 ELSE phone END 
-             WHERE user_id = $2`,
-            [validCleanPhone, user.user_id]
+            `UPDATE users
+             SET is_verified = true,
+                 verification_code = $1,
+                 phone = CASE WHEN (phone IS NULL OR phone = '') AND $2 != '' THEN $2 ELSE phone END
+             WHERE user_id = $3`,
+            [`CONFIRMED:${cleanCode}`, validCleanPhone, user.user_id]
         );
 
         // Keep in cache for polling endpoint resolution
@@ -646,24 +650,34 @@ router.get('/verification-status/:code', async (req, res) => {
     try {
         const cleanCode = code.trim().toUpperCase();
 
-        // 0. Check in-memory verified cache
+        // 0. Check in-memory verified cache (same-pod fast path)
         if (verifiedCodesCache.has(cleanCode)) {
             return res.status(200).json({ isVerified: true });
         }
 
-        // 1. Check if a user with that verification_code exists (case-insensitive)
-        const userResult = await pool.query(
-            'SELECT is_verified FROM users WHERE UPPER(verification_code) = UPPER($1)',
-            [cleanCode]
+        // 1. Has /verify-code marked this exact code confirmed? This is checked against
+        // Postgres (not a per-account is_verified flag, which for an already-registered user
+        // requesting a password reset is already true long before any WhatsApp step happens)
+        // so a stale account-level flag can't be mistaken for this specific code being confirmed.
+        const confirmedResult = await pool.query(
+            'SELECT 1 FROM users WHERE UPPER(verification_code) = UPPER($1)',
+            [`CONFIRMED:${cleanCode}`]
         );
-
-        if (userResult.rows.length > 0) {
-            // User exists with this active verification_code (meaning not yet verified)
-            const isVer = userResult.rows[0].is_verified;
-            return res.status(200).json({ isVerified: Boolean(isVer) });
+        if (confirmedResult.rowCount > 0) {
+            return res.status(200).json({ isVerified: true });
         }
 
-        // 2. If no user exists with that code (meaning it was verified and cleared)
+        // 2. Still pending: a user row is holding this exact code, unconfirmed.
+        const pendingResult = await pool.query(
+            'SELECT 1 FROM users WHERE UPPER(verification_code) = UPPER($1)',
+            [cleanCode]
+        );
+        if (pendingResult.rowCount > 0) {
+            return res.status(200).json({ isVerified: false });
+        }
+
+        // 3. No user holds this code in either form -- already confirmed and consumed
+        // (verification_code cleared back to NULL by a completed /reset-password).
         return res.status(200).json({ isVerified: true });
     } catch (err) {
         console.error("Verification status polling error:", err.message);
@@ -748,9 +762,15 @@ router.post('/reset-password', async (req, res) => {
 
         const user = userResult.rows[0];
 
-        // Check if code was verified (or matches)
-        const isVerified = verifiedCodesCache.has(cleanCode) || (user.verification_code && user.verification_code.toUpperCase() === cleanCode);
-        if (!isVerified && user.verification_code !== null) {
+        // Only a code that /verify-code actually confirmed (i.e. sent from the registered
+        // WhatsApp number, checked there) counts as verified. Comparing against the *pending*
+        // user.verification_code value would accept ANY caller who knows the code
+        // /forgot-password just handed back in its own response -- no WhatsApp step required.
+        // verifiedCodesCache is a same-pod fast path; the DB check is the reliable source of
+        // truth across replicas, since /verify-code marks confirmation there as "CONFIRMED:<code>".
+        const isVerified = verifiedCodesCache.has(cleanCode) ||
+            (user.verification_code && user.verification_code.toUpperCase() === `CONFIRMED:${cleanCode}`);
+        if (!isVerified) {
             return res.status(400).json({ error: 'Verification code is invalid or has not been confirmed via WhatsApp yet.' });
         }
 
