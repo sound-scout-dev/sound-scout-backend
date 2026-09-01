@@ -67,6 +67,30 @@ async function sendWhatsAppOTP(phone, message) {
     }
 }
 
+// Helper to resolve the active WhatsApp bot phone number
+async function getBotPhone() {
+    // 1. Query the live worker endpoint first to get the active connected bot number
+    try {
+        const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
+        const resp = await axios.get(`${workerUrl}/`, { timeout: 3500 });
+        if (resp.data && resp.data.botPhone) {
+            const clean = String(resp.data.botPhone).replace(/\D/g, '');
+            if (clean.length >= 9) {
+                return clean;
+            }
+        }
+    } catch (e) {
+        console.warn("Could not query worker for active botPhone:", e.message);
+    }
+
+    // 2. Fall back to environment variable if set and valid
+    let raw = String(process.env.WHATSAPP_BOT_PHONE || '').replace(/\D/g, '');
+    if (raw && raw.length >= 9 && !raw.includes('X') && raw !== '94703252870') {
+        return raw;
+    }
+
+    return '';
+}
 
 // POST /api/users/register - Create a new user with password hashing & Click-to-Verify code
 router.post('/register', async (req, res) => {
@@ -116,31 +140,6 @@ router.post('/register', async (req, res) => {
             ...AUTH_COOKIE_OPTIONS,
             maxAge: 15 * 60 * 1000
         });
-
-// Helper to resolve the active WhatsApp bot phone number
-async function getBotPhone() {
-    // 1. Query the live worker endpoint first to get the active connected bot number
-    try {
-        const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
-        const resp = await axios.get(`${workerUrl}/`, { timeout: 3500 });
-        if (resp.data && resp.data.botPhone) {
-            const clean = String(resp.data.botPhone).replace(/\D/g, '');
-            if (clean.length >= 9) {
-                return clean;
-            }
-        }
-    } catch (e) {
-        console.warn("Could not query worker for active botPhone:", e.message);
-    }
-
-    // 2. Fall back to environment variable if set and valid
-    let raw = String(process.env.WHATSAPP_BOT_PHONE || '').replace(/\D/g, '');
-    if (raw && raw.length >= 9 && !raw.includes('X') && raw !== '94703252870') {
-        return raw;
-    }
-
-    return '';
-}
 
         const botPhone = await getBotPhone();
 
@@ -598,19 +597,28 @@ router.post('/verify-code', async (req, res) => {
 
         const userNorm = normPhone(user.phone);
         const incomingNorm = normPhone(phone);
-        const isLidSender = incomingNorm.length >= 14 || incomingNorm.startsWith('63415') || incomingNorm.startsWith('25157');
 
         console.log(`🔍 Verification Phone Check -> Registered User: "${user.phone}" (norm: "${userNorm}"), Incoming Sender: "${phone}" (norm: "${incomingNorm}")`);
 
-        const isPhoneMatched = (userNorm === incomingNorm) || 
-                              (userNorm.length >= 9 && incomingNorm.length >= 9 && userNorm.slice(-9) === incomingNorm.slice(-9));
+        const isPhoneMatched = userNorm.length >= 9 && incomingNorm.length >= 9 &&
+            (userNorm === incomingNorm || userNorm.slice(-9) === incomingNorm.slice(-9));
 
-        // If user registered with a phone number, enforce matching UNLESS sender is a WhatsApp LID device identifier
-        if (userNorm && incomingNorm && !isLidSender && !isPhoneMatched) {
+        // If this account already has a registered phone number, the code MUST be confirmed
+        // to have come from that exact number -- no exceptions. There used to be a bypass here
+        // for senders WhatsApp addresses by LID (Linked ID) instead of phone number, on the
+        // theory that a LID couldn't be checked; that was a full authentication bypass in
+        // practice, since it also fired whenever the LID sender happened to be a total stranger,
+        // not just the account owner using a newer WhatsApp client. The worker now resolves the
+        // real phone-number JID behind a LID via Baileys' remoteJidAlt before calling this
+        // endpoint (see whatsapp-worker/index.js), so there's no longer a legitimate case where
+        // a genuine sender's number is unknowable here. An account with no phone on file yet
+        // (userNorm empty) is the one real exception: that's first-time phone binding at
+        // registration, not a check against an existing number.
+        if (userNorm && !isPhoneMatched) {
             console.warn(`🔒 Phone mismatch for user_id=${user.user_id}: registered "${user.phone}" (${userNorm}) vs sender "${phone}" (${incomingNorm})`);
-            return res.status(400).json({ 
-                success: false, 
-                message: `Verification code must be sent from your registered WhatsApp number (${user.phone}).` 
+            return res.status(400).json({
+                success: false,
+                message: `Verification code must be sent from your registered WhatsApp number (${user.phone}).`
             });
         }
 
@@ -619,7 +627,7 @@ router.post('/verify-code', async (req, res) => {
         // check confirmation straight from Postgres (shared across all backend replicas) instead
         // of relying only on this pod's in-memory verifiedCodesCache, which a later request could
         // easily land on a different pod than the one that processed this WhatsApp confirmation.
-        const validCleanPhone = (incomingNorm && !isLidSender) ? incomingNorm : '';
+        const validCleanPhone = incomingNorm || '';
         await pool.query(
             `UPDATE users
              SET is_verified = true,
