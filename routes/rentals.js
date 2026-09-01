@@ -279,8 +279,8 @@ router.get('/my-bookings', authenticateUser, async (req, res) => {
 
         const formattedBookings = result.rows.map(b => ({
             ...b,
-            vendor_phone: normPhone(b.vendor_phone || '0703252870'),
-            renter_phone: normPhone(b.renter_phone || '0703252870')
+            vendor_phone: b.vendor_phone ? normPhone(b.vendor_phone) : '',
+            renter_phone: b.renter_phone ? normPhone(b.renter_phone) : ''
         }));
 
         res.status(200).json(formattedBookings);

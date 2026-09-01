@@ -85,12 +85,24 @@ async function getBotPhone() {
 
     // 2. Fall back to environment variable if set and valid
     let raw = String(process.env.WHATSAPP_BOT_PHONE || '').replace(/\D/g, '');
-    if (raw && raw.length >= 9 && !raw.includes('X') && raw !== '94703252870') {
+    if (raw && raw.length >= 9 && !raw.includes('X')) {
         return raw;
     }
 
-    return '';
+    // 3. Known-correct number as a last resort if the worker is briefly unreachable and no env
+    // override is set -- purely informational (the "message us" deep link), not a security check.
+    return '94784475700';
 }
+
+// GET /api/users/bot-phone - Public: current WhatsApp bot number for "message us" deep links.
+// The worker isn't reachable directly from the browser (no public route to it, and the old
+// standalone Render deployment some frontend code used to hit directly is stale/disconnected) --
+// the backend already has proper cluster-internal access to it via getBotPhone(), so route
+// through here instead of querying the worker from the client.
+router.get('/bot-phone', async (req, res) => {
+    const botPhone = await getBotPhone();
+    res.status(200).json({ botPhone });
+});
 
 // POST /api/users/register - Create a new user with password hashing & Click-to-Verify code
 router.post('/register', async (req, res) => {
