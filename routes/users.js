@@ -11,6 +11,16 @@ const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'soundscout_acces
 const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || 'soundscout_refresh_secret_12345';
 const SALT_ROUNDS = 10;
 
+const IS_PROD = process.env.NODE_ENV === 'production';
+// Frontend (Vercel) and backend (GKE) are on different registrable domains, so every request is
+// cross-site from the browser's perspective. SameSite=Lax cookies are withheld from cross-site
+// fetch/XHR calls (only sent on top-level navigations), so refreshToken/accessToken never reached
+// /users/refresh in production -- every 15-minute access-token expiry silently failed to refresh
+// and force-logged the user out mid-session. SameSite=None (requires Secure, already true in prod)
+// fixes it; clearCookie must be passed the same attributes or the browser won't recognize it as
+// clearing the same cookie.
+const AUTH_COOKIE_OPTIONS = { httpOnly: true, secure: IS_PROD, sameSite: IS_PROD ? 'None' : 'Lax' };
+
 // Helper to hash token before storing in database (adds database-leak protection)
 function hashToken(token) {
     return crypto.createHash('sha256').update(token).digest('hex');
@@ -98,16 +108,12 @@ router.post('/register', async (req, res) => {
         );
 
         res.cookie('refreshToken', refreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'Lax',
+            ...AUTH_COOKIE_OPTIONS,
             maxAge: 7 * 24 * 60 * 60 * 1000
         });
 
         res.cookie('accessToken', accessToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'Lax',
+            ...AUTH_COOKIE_OPTIONS,
             maxAge: 15 * 60 * 1000
         });
 
@@ -224,17 +230,13 @@ router.post('/login', async (req, res) => {
 
         // Set refresh token in HTTP-only cookie (Web client security)
         res.cookie('refreshToken', refreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'Lax',
+            ...AUTH_COOKIE_OPTIONS,
             maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
         });
 
         // Set access token in HTTP-only cookie as well (optional but helpful fallback)
         res.cookie('accessToken', accessToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'Lax',
+            ...AUTH_COOKIE_OPTIONS,
             maxAge: 15 * 60 * 1000 // 15 mins
         });
 
@@ -290,8 +292,8 @@ router.post('/refresh', async (req, res) => {
             try {
                 const decoded = jwt.verify(refreshToken, REFRESH_TOKEN_SECRET);
                 await pool.query('DELETE FROM refresh_tokens WHERE user_id = $1', [decoded.user_id]);
-                res.clearCookie('refreshToken');
-                res.clearCookie('accessToken');
+                res.clearCookie('refreshToken', AUTH_COOKIE_OPTIONS);
+                res.clearCookie('accessToken', AUTH_COOKIE_OPTIONS);
             } catch (_) { }
 
             return res.status(403).json({ error: 'Session compromised. Please re-authenticate.' });
@@ -355,16 +357,12 @@ router.post('/refresh', async (req, res) => {
 
         // Set cookies with new values
         res.cookie('refreshToken', newRefreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'Lax',
+            ...AUTH_COOKIE_OPTIONS,
             maxAge: 7 * 24 * 60 * 60 * 1000
         });
 
         res.cookie('accessToken', newAccessToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'Lax',
+            ...AUTH_COOKIE_OPTIONS,
             maxAge: 15 * 60 * 1000
         });
 
@@ -398,8 +396,8 @@ router.post('/logout', async (req, res) => {
         }
 
         // Clear cookies
-        res.clearCookie('refreshToken');
-        res.clearCookie('accessToken');
+        res.clearCookie('refreshToken', AUTH_COOKIE_OPTIONS);
+        res.clearCookie('accessToken', AUTH_COOKIE_OPTIONS);
 
         res.status(200).json({ message: 'Logged out successfully.' });
     } catch (err) {
