@@ -1,7 +1,6 @@
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
-
-const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'soundscout_access_secret_12345';
+const { ACCESS_TOKEN_SECRET } = require('../config/secrets');
 
 const authenticateUser = (req, res, next) => {
     let token = null;

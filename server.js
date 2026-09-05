@@ -8,16 +8,39 @@ const YAML = require('yamljs');
 const swaggerDocument = YAML.load('./openapi.yaml');
 const http = require('http');
 const { Server } = require('socket.io');
+const { globalLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 const port = process.env.PORT || 5000;
+
+// Comma-separated list of exact origins allowed to make credentialed requests, e.g.
+// "https://soundscout.vercel.app,https://app.soundscout.lk". Previously CORS reflected
+// *any* request origin back with credentials:true -- functionally no restriction at
+// all, since a credentialed request from any attacker-controlled site would pass the
+// browser's same-origin check. Without this var set, requests are still accepted (so
+// an unconfigured deploy doesn't just break) but a warning is logged.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
+
+if (ALLOWED_ORIGINS.length === 0) {
+    console.warn('⚠️  ALLOWED_ORIGINS is not set — CORS is reflecting all origins. Set ALLOWED_ORIGINS to your frontend URL(s) to lock this down.');
+}
+
+function isOriginAllowed(origin) {
+    if (!origin) return true; // same-origin / non-browser requests carry no Origin header
+    if (ALLOWED_ORIGINS.length === 0) return true; // unconfigured: preserve old behavior, but warned above
+    return ALLOWED_ORIGINS.includes(origin);
+}
 
 // Create HTTP Server and Socket.io instance
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
         origin: (origin, callback) => {
-            callback(null, origin || true);
+            if (isOriginAllowed(origin)) return callback(null, origin || true);
+            callback(new Error('Not allowed by CORS'));
         },
         methods: ["GET", "POST", "PUT", "DELETE"],
         credentials: true
@@ -38,11 +61,12 @@ io.on('connection', (socket) => {
 // Middleware
 app.use(cors({
     origin: (origin, callback) => {
-        // Dynamically echo the origin to satisfy credentialed request rules
-        callback(null, origin || true);
+        if (isOriginAllowed(origin)) return callback(null, origin || true);
+        callback(new Error('Not allowed by CORS'));
     },
     credentials: true
 }));
+app.use(globalLimiter);
 app.use(express.json({ limit: '10mb' })); // Parses incoming JSON requests up to 10MB
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use((req, res, next) => {
@@ -62,7 +86,37 @@ app.get('/api/health', (req, res) => {
 const fetch = require('node-fetch');
 const multer = require('multer');
 const FormData = require('form-data');
-const upload = multer({ storage: multer.memoryStorage() });
+
+// Previously `multer({ storage: memoryStorage() })` had no fileFilter or limits, so
+// these proxy endpoints accepted a file of any type or size under the 'audio'/'image'
+// field name -- no MIME check, no size cap, nothing stopping an .exe or a
+// multi-gigabyte upload from being buffered into memory and forwarded to the AI
+// service. Each endpoint below gets its own instance scoped to the type it actually
+// handles.
+function uploadFor(allowedMimePrefix, maxSizeMb) {
+    return multer({
+        storage: multer.memoryStorage(),
+        limits: { fileSize: maxSizeMb * 1024 * 1024 },
+        fileFilter: (req, file, cb) => {
+            if (!file.mimetype || !file.mimetype.startsWith(allowedMimePrefix)) {
+                return cb(new Error(`Only ${allowedMimePrefix}* files are allowed.`));
+            }
+            cb(null, true);
+        }
+    });
+}
+
+const uploadAudio = uploadFor('audio/', 15);
+const uploadImage = uploadFor('image/', 8);
+
+// Multer surfaces fileFilter rejections and size-limit overruns as errors passed to
+// next(), which would otherwise fall through to Express's default HTML error page.
+function handleUploadErrors(err, req, res, next) {
+    if (err instanceof multer.MulterError || err) {
+        return res.status(400).json({ error: err.message || 'Upload rejected.' });
+    }
+    next();
+}
 const getAiServiceBaseUrl = () => {
     const envUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
     try {
@@ -75,7 +129,7 @@ const getAiServiceBaseUrl = () => {
 
 // AI Proxy Routes
 // multer parses the multipart upload into memory; we rebuild a proper FormData to forward to Flask
-app.post(['/api/ai-voice', '/ai-voice'], upload.single('audio'), async (req, res) => {
+app.post(['/api/ai-voice', '/ai-voice'], uploadAudio.single('audio'), handleUploadErrors, async (req, res) => {
     try {
         const baseUrl = getAiServiceBaseUrl();
         const targetUrl = `${baseUrl}/api/voice-intake`;
@@ -105,7 +159,7 @@ app.post(['/api/ai-voice', '/ai-voice'], upload.single('audio'), async (req, res
     }
 });
 
-app.post(['/api/ai-image', '/ai-image'], upload.single('image'), async (req, res) => {
+app.post(['/api/ai-image', '/ai-image'], uploadImage.single('image'), handleUploadErrors, async (req, res) => {
     try {
         const baseUrl = getAiServiceBaseUrl();
         const targetUrl = `${baseUrl}/api/venue-analysis`;

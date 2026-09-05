@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const { authenticateUser, requireRole } = require('../middleware/auth');
+const { withUserContext } = require('../middleware/dbContext');
+const { WORKER_SECRET } = require('../config/secrets');
+const { validateBody } = require('../middleware/validate');
+const schemas = require('../validation/schemas');
 const axios = require('axios');
 
 // Active SSE clients for real-time quantity updates
@@ -9,13 +13,22 @@ let sseClients = [];
 
 // Helper to broadcast inventory changes to all connected frontend clients
 function broadcastInventoryUpdate(data) {
+    const deadClientIds = [];
     sseClients.forEach(client => {
         try {
             client.res.write(`data: ${JSON.stringify(data)}\n\n`);
         } catch (e) {
+            // A write failure here means the socket is already gone but 'close' hasn't
+            // fired (or won't) on it -- without pruning here too, that client entry
+            // (and its held response object) stays in sseClients for the life of the
+            // process, an unbounded leak under any connection churn.
             console.warn("SSE broadcast write error:", e.message);
+            deadClientIds.push(client.id);
         }
     });
+    if (deadClientIds.length > 0) {
+        sseClients = sseClients.filter(c => !deadClientIds.includes(c.id));
+    }
 }
 
 // GET /api/rentals/stream - Server-Sent Events (SSE) real-time inventory stream
@@ -33,6 +46,38 @@ router.get('/stream', (req, res) => {
         sseClients = sseClients.filter(c => c.id !== clientId);
     });
 });
+
+// Equipment photos arrive one of two ways: a plain http(s) URL, or a base64 data URI
+// produced client-side by FileReader.readAsDataURL() (see VendorDashboard.jsx). Neither
+// path was ever checked server-side -- any file type, any size (bounded only by the
+// generic 10mb JSON body cap, not an intentional per-upload limit) was accepted and
+// stored directly in photo_url TEXT. This allowlists image MIME types on the data-URI
+// path and caps its decoded size well under that body limit.
+const MAX_PHOTO_DATA_URL_BYTES = 4 * 1024 * 1024; // 4MB decoded
+const DATA_URL_PATTERN = /^data:image\/(png|jpe?g|webp|gif);base64,([A-Za-z0-9+/=]+)$/;
+
+function validatePhotoUrl(photoUrl) {
+    if (!photoUrl) return { ok: true, value: null };
+    if (typeof photoUrl !== 'string') return { ok: false, error: 'photoUrl must be a string.' };
+
+    if (photoUrl.startsWith('data:')) {
+        const match = photoUrl.match(DATA_URL_PATTERN);
+        if (!match) {
+            return { ok: false, error: 'Photo must be a PNG, JPEG, WEBP, or GIF image.' };
+        }
+        const decodedBytes = Math.ceil((match[2].length * 3) / 4);
+        if (decodedBytes > MAX_PHOTO_DATA_URL_BYTES) {
+            return { ok: false, error: 'Photo must be smaller than 4MB.' };
+        }
+        return { ok: true, value: photoUrl };
+    }
+
+    if (/^https?:\/\//i.test(photoUrl)) {
+        return { ok: true, value: photoUrl };
+    }
+
+    return { ok: false, error: 'photoUrl must be an http(s) URL or an image data URI.' };
+}
 
 function normPhone(phone) {
     const str = String(phone || '');
@@ -92,12 +137,17 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/rentals - Vendor lists a new instant rental item
-router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
+router.post('/', authenticateUser, requireRole('vendor'), validateBody(schemas.createRentalItem), withUserContext, async (req, res) => {
     const { equipmentSummary, pricePerDay, qty, category, photoUrl } = req.body;
     const vendor_id = req.user.user_id;
 
     if (!equipmentSummary || !pricePerDay) {
         return res.status(400).json({ error: 'Equipment summary and price per day are required.' });
+    }
+
+    const photoCheck = validatePhotoUrl(photoUrl);
+    if (!photoCheck.ok) {
+        return res.status(400).json({ error: photoCheck.error });
     }
 
     try {
@@ -106,7 +156,7 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
         const location = vendorRes.rows[0]?.region || 'Colombo';
         const vendorPhone = normPhone(vendorRes.rows[0]?.phone);
 
-        const result = await pool.query(
+        const result = await req.db.query(
             `INSERT INTO rental_items (vendor_id, vendor_name, equipment_summary, price_per_day, qty, category, location, photo_url)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
             [
@@ -117,7 +167,7 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
                 Math.max(1, Number(qty) || 1),
                 category || 'Audio',
                 location,
-                photoUrl || null
+                photoCheck.value
             ]
         );
 
@@ -148,7 +198,7 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
 });
 
 // POST /api/rentals/:id/book - Organizer books instant rental item & triggers WhatsApp vendor notification
-router.post('/:id/book', authenticateUser, async (req, res) => {
+router.post('/:id/book', authenticateUser, validateBody(schemas.bookRental), withUserContext, async (req, res) => {
     const itemId = req.params.id;
     const renter_id = req.user.user_id;
     const { qtyToBook = 1, rentalDays = 1, paymentMode = '50% Advance Escrow Deposit' } = req.body;
@@ -179,13 +229,15 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
         const depositPaid = paymentMode.includes('100%') ? totalPrice : Math.round(totalPrice * 0.5);
 
         // Deduct inventory quantity safely
-        const updatedItemRes = await pool.query(
+        const updatedItemRes = await req.db.query(
             'UPDATE rental_items SET qty = GREATEST(0, $1 - $2) WHERE item_id = $3 RETURNING *',
             [currentAvailableQty, requestedQty, itemId]
         );
 
-        // Insert rental booking record
-        const bookingRes = await pool.query(
+        // Insert rental booking record. Runs on req.db (renter's RLS context) rather
+        // than the plain pool, since rental_bookings_insert requires renter_id to
+        // match the authenticated caller.
+        const bookingRes = await req.db.query(
             `INSERT INTO rental_bookings (item_id, renter_id, renter_name, qty_booked, rental_days, total_price, deposit_paid, payment_mode)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
             [itemId, renter_id, renter?.name || 'Organizer', requestedQty, rentalDays, totalPrice, depositPaid, paymentMode]
@@ -226,7 +278,7 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
                     `📲 *Contact Organizer on WhatsApp:* ${organizerContactUrl}`;
 
                 const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
-                const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
+                const workerSecret = WORKER_SECRET;
 
                 console.log(`📡 Dispatching booking alert to WhatsApp worker for vendor phone: ${targetVendorPhone}`);
                 axios.post(`${workerUrl}/api/send-message`, {
@@ -259,11 +311,11 @@ router.post('/:id/book', authenticateUser, async (req, res) => {
 });
 
 // GET /api/rentals/my-bookings - Fetch confirmed bookings for vendor or organizer
-router.get('/my-bookings', authenticateUser, async (req, res) => {
+router.get('/my-bookings', authenticateUser, withUserContext, async (req, res) => {
     const userId = req.user.user_id;
 
     try {
-        const result = await pool.query(
+        const result = await req.db.query(
             `SELECT b.*, r.equipment_summary, r.vendor_name, 
                     u_vendor.phone AS vendor_phone, 
                     u_renter.phone AS renter_phone, 

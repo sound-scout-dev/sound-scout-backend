@@ -3,6 +3,9 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const { authenticateUser, requireRole } = require('../middleware/auth');
+const { withUserContext } = require('../middleware/dbContext');
+const { validateBody } = require('../middleware/validate');
+const schemas = require('../validation/schemas');
 
 function extractDistrictFromLocation(location) {
     if (!location) return 'Colombo';
@@ -35,7 +38,7 @@ function extractDistrictFromLocation(location) {
 }
 
 // POST /api/events - Organizer submits a new event
-router.post('/', authenticateUser, requireRole('organizer'), async (req, res) => {
+router.post('/', authenticateUser, requireRole('organizer'), validateBody(schemas.createEvent), withUserContext, async (req, res) => {
     const { name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location, event_date } = req.body;
     const organizer_id = req.user.user_id; // Securely derive from token, preventing spoofing
 
@@ -52,7 +55,7 @@ router.post('/', authenticateUser, requireRole('organizer'), async (req, res) =>
         const env = environment || 'Indoor';
 
         // District is initially null; Python AI service will resolve it via LLM location analysis during plan generation
-        const result = await pool.query(
+        const result = await req.db.query(
             `INSERT INTO events (organizer_id, name, event_type, crowd_count, venue_size_sqm, budget_range, environment, requirements, description, location, district, event_date)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
             [organizer_id, name || null, event_type, crowd, venue_size, budget_range, env, req_json, description || '', location || '', null, event_date || null]
@@ -139,13 +142,13 @@ router.get('/open', authenticateUser, requireRole('vendor'), async (req, res) =>
 });
 
 // POST /api/events/:eventId/generate-plan - Bridge to AI Microservice
-router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'), async (req, res) => {
+router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'), withUserContext, async (req, res) => {
     const { eventId } = req.params;
     const organizer_id = req.user.user_id;
 
     try {
         // 1. Fetch the event details to send context to the AI service
-        const eventResult = await pool.query(
+        const eventResult = await req.db.query(
             'SELECT * FROM events WHERE event_id = $1',
             [eventId]
         );
@@ -193,7 +196,7 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
         }
 
         // 4. Update the database with the generated dual-plan options, keep status as draft, and save AI resolved district
-        const updateResult = await pool.query(
+        const updateResult = await req.db.query(
             `UPDATE events 
              SET ai_infrastructure_plan = $1, district = $2, status = 'draft' 
              WHERE event_id = $3 RETURNING *`,
@@ -249,7 +252,7 @@ router.get('/', authenticateUser, requireRole('organizer'), async (req, res) => 
 });
 
 // PUT /api/events/:eventId/finalize-plan - Finalize the selected AI plan
-router.put('/:eventId/finalize-plan', authenticateUser, requireRole('organizer'), async (req, res) => {
+router.put('/:eventId/finalize-plan', authenticateUser, requireRole('organizer'), withUserContext, async (req, res) => {
     const { eventId } = req.params;
     const { selected_plan } = req.body;
     const organizer_id = req.user.user_id;
@@ -260,7 +263,7 @@ router.put('/:eventId/finalize-plan', authenticateUser, requireRole('organizer')
 
     try {
         // Update the event's ai_infrastructure_plan with the finalized version and set to open
-        const result = await pool.query(
+        const result = await req.db.query(
             `UPDATE events SET ai_infrastructure_plan = $1, status = 'bidding_open' 
              WHERE event_id = $2 AND organizer_id = $3 RETURNING *`,
             [JSON.stringify(selected_plan), eventId, organizer_id]

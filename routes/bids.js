@@ -3,10 +3,15 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const { authenticateUser, requireRole } = require('../middleware/auth');
+const { withUserContext } = require('../middleware/dbContext');
+const { WORKER_SECRET } = require('../config/secrets');
+const { validateBody } = require('../middleware/validate');
+const schemas = require('../validation/schemas');
+const { cacheGet, cacheSet, cacheDel } = require('../config/cache');
 const axios = require('axios');
 
 // POST /api/bids - Vendor submits a bid for an event
-router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
+router.post('/', authenticateUser, requireRole('vendor'), validateBody(schemas.createBid), withUserContext, async (req, res) => {
     const { event_id, proposed_price, notes, bid_categories, bid_items } = req.body;
     const vendor_id = req.user.user_id; // Securely derive vendor identity
 
@@ -23,7 +28,7 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
         // A vendor may only place one bid per event — they choose which
         // categories that single bid covers, leaving the rest open for other
         // vendors to bid on.
-        const existingBid = await pool.query(
+        const existingBid = await req.db.query(
             'SELECT bid_id FROM bids WHERE event_id = $1 AND vendor_id = $2',
             [event_id, vendor_id]
         );
@@ -33,7 +38,7 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
 
         const categoriesJson = bid_categories ? JSON.stringify(bid_categories) : null;
         const itemsJson = bid_items ? JSON.stringify(bid_items) : '[]';
-        const result = await pool.query(
+        const result = await req.db.query(
             `INSERT INTO bids (event_id, vendor_id, proposed_price, notes, bid_categories, bid_items)
              VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
             [event_id, vendor_id, price, notes, categoriesJson, itemsJson]
@@ -56,13 +61,13 @@ router.post('/', authenticateUser, requireRole('vendor'), async (req, res) => {
 });
 
 // GET /api/bids/event/:eventId - Organizer views all bids for their specific event
-router.get('/event/:eventId', authenticateUser, requireRole('organizer'), async (req, res) => {
+router.get('/event/:eventId', authenticateUser, requireRole('organizer'), withUserContext, async (req, res) => {
     const { eventId } = req.params;
     const organizer_id = req.user.user_id;
 
     try {
         // Verify the event belongs to this organizer
-        const eventCheck = await pool.query('SELECT organizer_id FROM events WHERE event_id = $1', [eventId]);
+        const eventCheck = await req.db.query('SELECT organizer_id FROM events WHERE event_id = $1', [eventId]);
         if (eventCheck.rowCount === 0) {
             return res.status(404).json({ error: 'Event not found.' });
         }
@@ -70,7 +75,7 @@ router.get('/event/:eventId', authenticateUser, requireRole('organizer'), async 
             return res.status(403).json({ error: 'Access forbidden. You do not own this event.' });
         }
 
-        const result = await pool.query(
+        const result = await req.db.query(
             `SELECT b.bid_id, b.vendor_id, b.proposed_price, b.status, b.created_at, b.notes, b.bid_categories, b.bid_items, b.payment_status, b.final_payment_status, u.name AS vendor_name, u.is_premium,
                     CASE WHEN b.status = 'accepted' AND b.payment_status = 'paid' THEN u.phone ELSE '' END AS vendor_phone 
              FROM bids b 
@@ -87,14 +92,12 @@ router.get('/event/:eventId', authenticateUser, requireRole('organizer'), async 
 });
 
 // PUT /api/bids/:bidId/accept - Organizer accepts a winning bid
-router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (req, res) => {
+router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), withUserContext, async (req, res) => {
     const { bidId } = req.params;
     const organizer_id = req.user.user_id; // Securely derive identity from token
+    const client = req.db; // transaction + RLS context already open, see middleware/dbContext.js
 
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-
         // Lock the bid row and derive event_id and bid_categories server-side
         const bidResult = await client.query(
             'SELECT event_id, bid_categories FROM bids WHERE bid_id = $1 FOR UPDATE',
@@ -102,7 +105,6 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
         );
 
         if (bidResult.rowCount === 0) {
-            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Bid not found.' });
         }
 
@@ -115,12 +117,10 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
         );
 
         if (eventResult.rowCount === 0) {
-            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Event not found.' });
         }
 
         if (String(eventResult.rows[0].organizer_id) !== String(organizer_id)) {
-            await client.query('ROLLBACK');
             return res.status(403).json({ error: 'Unauthorized to accept bids for this event.' });
         }
 
@@ -130,11 +130,11 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
         // 2. Reject ONLY other pending bids that overlap with the accepted categories
         if (acceptedCategories.length > 0) {
             await client.query(`
-                UPDATE bids 
-                SET status = 'rejected' 
-                WHERE event_id = $1 AND bid_id != $2 AND status = 'pending' 
+                UPDATE bids
+                SET status = 'rejected'
+                WHERE event_id = $1 AND bid_id != $2 AND status = 'pending'
                 AND EXISTS (
-                    SELECT 1 FROM jsonb_array_elements_text(bid_categories) cat 
+                    SELECT 1 FROM jsonb_array_elements_text(bid_categories) cat
                     WHERE cat = ANY($3::text[])
                 )
             `, [eventId, bidId, acceptedCategories]);
@@ -154,23 +154,21 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
         }
 
         const isFullyBooked = requiredCategories.every(cat => fulfilledCategories.has(cat));
-        
+
         if (isFullyBooked) {
             await client.query("UPDATE events SET status = 'closed' WHERE event_id = $1", [eventId]);
         }
 
         // Fetch details for WhatsApp notification in the background
         const detailsResult = await client.query(
-            `SELECT u.phone AS vendor_phone, u.name AS vendor_name, e.event_type, e.location, org.name AS organizer_name, org.phone AS organizer_phone, b.proposed_price 
-             FROM bids b 
-             JOIN users u ON b.vendor_id = u.user_id 
-             JOIN events e ON b.event_id = e.event_id 
-             JOIN users org ON e.organizer_id = org.user_id 
+            `SELECT u.phone AS vendor_phone, u.name AS vendor_name, e.event_type, e.location, org.name AS organizer_name, org.phone AS organizer_phone, b.proposed_price
+             FROM bids b
+             JOIN users u ON b.vendor_id = u.user_id
+             JOIN events e ON b.event_id = e.event_id
+             JOIN users org ON e.organizer_id = org.user_id
              WHERE b.bid_id = $1`,
             [bidId]
         );
-
-        await client.query('COMMIT');
 
         if (detailsResult.rowCount > 0) {
             const details = detailsResult.rows[0];
@@ -179,7 +177,7 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
             if (vendor_phone) {
                 const message = `🎉 *SoundScout Bid Accepted!*\n\nDear *${vendor_name}*,\n\nWe are excited to inform you that your bid of *Rs. ${Number(proposed_price).toLocaleString()}* for the event *${event_type}* at *${location}* has been *ACCEPTED*!\n\nOrganizer details:\n👤 Name: *${organizer_name}*\n📞 Phone: *${organizer_phone || 'N/A'}*\n\nPlease log in to your SoundScout dashboard to coordinate further details.`;
                 const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
-                const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
+                const workerSecret = WORKER_SECRET;
 
                 try {
                     await axios.post(`${workerUrl}/api/send-message`, {
@@ -195,20 +193,19 @@ router.put('/:bidId/accept', authenticateUser, requireRole('organizer'), async (
 
         res.status(200).json({ message: 'Bid accepted and event closed!' });
     } catch (err) {
-        await client.query('ROLLBACK');
         console.error(err.message);
         res.status(500).json({ error: 'Server error accepting bid.' });
-    } finally {
-        client.release();
     }
+    // Transaction commit/rollback and client release are handled by withUserContext
+    // based on the final response status -- see middleware/dbContext.js.
 });
 
 // GET /api/bids/vendor - Vendor views their own placed bids
-router.get('/vendor', authenticateUser, requireRole('vendor'), async (req, res) => {
+router.get('/vendor', authenticateUser, requireRole('vendor'), withUserContext, async (req, res) => {
     const vendor_id = req.user.user_id;
 
     try {
-        const result = await pool.query(
+        const result = await req.db.query(
             `SELECT b.bid_id, b.event_id, b.proposed_price, b.notes, b.status, b.bid_categories, b.payment_status, b.final_payment_status, e.event_type, e.location, u.name AS organizer_name,
                     CASE WHEN b.status = 'accepted' AND b.payment_status = 'paid' THEN u.phone ELSE '' END AS organizer_phone 
              FROM bids b 
@@ -226,19 +223,17 @@ router.get('/vendor', authenticateUser, requireRole('vendor'), async (req, res) 
 });
 
 // PUT /api/bids/:bidId/accept-and-pay - Organizer accepts a winning bid and performs escrow payment
-router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'), async (req, res) => {
+router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'), withUserContext, async (req, res) => {
     const { bidId } = req.params;
     const { transactionId } = req.body;
     const organizer_id = req.user.user_id;
+    const client = req.db; // transaction + RLS context already open, see middleware/dbContext.js
 
     if (!transactionId) {
         return res.status(400).json({ error: 'transactionId is required.' });
     }
 
-    const client = await pool.connect();
     try {
-        await client.query('BEGIN');
-
         // Lock the bid row and fetch the proposed price
         const bidResult = await client.query(
             'SELECT event_id, proposed_price, bid_categories FROM bids WHERE bid_id = $1 FOR UPDATE',
@@ -246,7 +241,6 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
         );
 
         if (bidResult.rowCount === 0) {
-            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Bid not found.' });
         }
 
@@ -256,7 +250,7 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
 
         // Calculate 6% platform fee, 50% deposit amount, and 50% final payout amount
         const platformFee = Number((proposedPrice * 0.06).toFixed(2));
-        const depositAmount = Number((proposedPrice * 0.50).toFixed(2)) + platformFee; 
+        const depositAmount = Number((proposedPrice * 0.50).toFixed(2)) + platformFee;
         const finalPayoutAmount = Number((proposedPrice * 0.50).toFixed(2));
 
         const eventResult = await client.query(
@@ -265,12 +259,10 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
         );
 
         if (eventResult.rowCount === 0) {
-            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Event not found.' });
         }
 
         if (String(eventResult.rows[0].organizer_id) !== String(organizer_id)) {
-            await client.query('ROLLBACK');
             return res.status(403).json({ error: 'Unauthorized to accept bids for this event.' });
         }
 
@@ -331,17 +323,15 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
             [bidId]
         );
 
-        await client.query('COMMIT');
-
         if (detailsResult.rowCount > 0) {
             const details = detailsResult.rows[0];
             const { vendor_phone, vendor_name, event_type, location, organizer_name, organizer_phone, proposed_price } = details;
-            
+
             if (vendor_phone) {
                 const message = `🎉 *SoundScout Bid Accepted & Escrow Deposit Paid!*\n\nDear *${vendor_name}*,\n\nWe are excited to inform you that your bid of *Rs. ${Number(proposed_price).toLocaleString()}* for the event *${event_type}* at *${location}* has been *ACCEPTED*!\n\nDeposit Paid: *Rs. ${Number(depositAmount).toLocaleString()}* (50% advance + 6% commission).\nOrganizer Details:\n👤 Name: *${organizer_name}*\n📞 Phone: *${organizer_phone || 'N/A'}*\n\nDirect contact details are now unlocked. Release of the final 50% payout occurs on the event day. Let's coordinate!`;
                 try {
                     await axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
-                        secret: process.env.WORKER_SECRET,
+                        secret: WORKER_SECRET,
                         phone: vendor_phone,
                         message: message
                     });
@@ -353,16 +343,15 @@ router.put('/:bidId/accept-and-pay', authenticateUser, requireRole('organizer'),
 
         res.status(200).json({ message: 'Bid accepted, escrow deposit paid, and event updated successfully!' });
     } catch (err) {
-        await client.query('ROLLBACK');
         console.error(err.message);
         res.status(500).json({ error: 'Server error during escrow payment and bid acceptance.' });
-    } finally {
-        client.release();
     }
+    // Transaction commit/rollback and client release are handled by withUserContext
+    // based on the final response status -- see middleware/dbContext.js.
 });
 
 // PUT /api/bids/:bidId/final-payment - Organizer releases the remaining 50% payment
-router.put('/:bidId/final-payment', authenticateUser, requireRole('organizer'), async (req, res) => {
+router.put('/:bidId/final-payment', authenticateUser, requireRole('organizer'), withUserContext, async (req, res) => {
     const { bidId } = req.params;
     const { transactionId } = req.body;
     const organizer_id = req.user.user_id;
@@ -372,7 +361,7 @@ router.put('/:bidId/final-payment', authenticateUser, requireRole('organizer'), 
     }
 
     try {
-        const bidResult = await pool.query(
+        const bidResult = await req.db.query(
             `SELECT b.event_id, b.final_payout_amount, b.final_payment_status, e.organizer_id, e.event_type, u.name AS vendor_name, u.phone AS vendor_phone 
              FROM bids b
              JOIN events e ON b.event_id = e.event_id
@@ -395,10 +384,10 @@ router.put('/:bidId/final-payment', authenticateUser, requireRole('organizer'), 
             return res.status(400).json({ error: 'Final payment has already been released.' });
         }
 
-        await pool.query(
-            `UPDATE bids 
-             SET final_payment_status = 'paid', 
-                 final_transaction_id = $1 
+        await req.db.query(
+            `UPDATE bids
+             SET final_payment_status = 'paid',
+                 final_transaction_id = $1
              WHERE bid_id = $2`,
             [transactionId, bidId]
         );
@@ -407,7 +396,7 @@ router.put('/:bidId/final-payment', authenticateUser, requireRole('organizer'), 
             const message = `💸 *SoundScout Final Payout Released!*\n\nDear *${bid.vendor_name}*,\n\nThe remaining 50% final payment of *Rs. ${Number(bid.final_payout_amount).toLocaleString()}* for event *${bid.event_type}* has been released by the organizer!\n\nTransaction Reference: *${transactionId}*.\n\nThank you for utilizing SoundScout! Please encourage the organizer to write a review.`;
             try {
                 await axios.post(`${process.env.WHATSAPP_WORKER_URL}/api/send-message`, {
-                    secret: process.env.WORKER_SECRET,
+                    secret: WORKER_SECRET,
                     phone: bid.vendor_phone,
                     message: message
                 });
@@ -424,7 +413,7 @@ router.put('/:bidId/final-payment', authenticateUser, requireRole('organizer'), 
 });
 
 // POST /api/reviews - Organizer submits a review/rating for a vendor
-router.post('/reviews', authenticateUser, requireRole('organizer'), async (req, res) => {
+router.post('/reviews', authenticateUser, requireRole('organizer'), validateBody(schemas.createReview), withUserContext, async (req, res) => {
     const { eventId, vendorId, rating, comment } = req.body;
     const organizer_id = req.user.user_id;
 
@@ -438,22 +427,26 @@ router.post('/reviews', authenticateUser, requireRole('organizer'), async (req, 
     }
 
     try {
-        await pool.query(
+        await req.db.query(
             `INSERT INTO reviews (event_id, vendor_id, organizer_id, rating, comment)
              VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT (event_id, vendor_id, organizer_id) 
+             ON CONFLICT (event_id, vendor_id, organizer_id)
              DO UPDATE SET rating = EXCLUDED.rating, comment = EXCLUDED.comment`,
             [eventId, vendorId, organizer_id, numericRating, comment || '']
         );
 
-        // Recalculate average rating for users table cache
-        const avgResult = await pool.query(
+        // Recalculate average rating for users table cache. Stays on req.db (the same
+        // still-open transaction as the INSERT above) rather than a separate pool
+        // connection -- otherwise, under read-committed isolation, this SELECT
+        // wouldn't see the review just written and would average a stale set.
+        const avgResult = await req.db.query(
             `SELECT ROUND(AVG(rating), 1) as avg_rating FROM reviews WHERE vendor_id = $1`,
             [vendorId]
         );
         const newAvg = avgResult.rows[0]?.avg_rating || 5.0;
-        await pool.query(`UPDATE users SET rating = $1 WHERE user_id = $2`, [newAvg, vendorId]);
+        await req.db.query(`UPDATE users SET rating = $1 WHERE user_id = $2`, [newAvg, vendorId]);
 
+        await cacheDel(`reviews:vendor:${vendorId}`);
         res.status(201).json({ message: 'Review submitted successfully!', rating: newAvg });
     } catch (err) {
         console.error(err.message);
@@ -464,15 +457,22 @@ router.post('/reviews', authenticateUser, requireRole('organizer'), async (req, 
 // GET /api/reviews/vendor/:vendorId - Fetch reviews for a vendor
 router.get('/reviews/vendor/:vendorId', authenticateUser, async (req, res) => {
     const { vendorId } = req.params;
+    const cacheKey = `reviews:vendor:${vendorId}`;
     try {
+        const cached = await cacheGet(cacheKey);
+        if (cached) {
+            return res.status(200).json(cached);
+        }
+
         const result = await pool.query(
-            `SELECT r.review_id, r.rating, r.comment, r.created_at, u.name AS organizer_name 
-             FROM reviews r 
-             JOIN users u ON r.organizer_id = u.user_id 
-             WHERE r.vendor_id = $1 
+            `SELECT r.review_id, r.rating, r.comment, r.created_at, u.name AS organizer_name
+             FROM reviews r
+             JOIN users u ON r.organizer_id = u.user_id
+             WHERE r.vendor_id = $1
              ORDER BY r.created_at DESC`,
             [vendorId]
         );
+        await cacheSet(cacheKey, result.rows, 60);
         res.status(200).json(result.rows);
     } catch (err) {
         console.error(err.message);

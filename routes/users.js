@@ -6,9 +6,11 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const axios = require('axios');
 const { authenticateUser, requireRole } = require('../middleware/auth');
+const { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET, WORKER_SECRET } = require('../config/secrets');
+const { authLimiter, otpLimiter } = require('../middleware/rateLimit');
+const { validateBody } = require('../middleware/validate');
+const schemas = require('../validation/schemas');
 
-const ACCESS_TOKEN_SECRET = process.env.ACCESS_TOKEN_SECRET || 'soundscout_access_secret_12345';
-const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || 'soundscout_refresh_secret_12345';
 const SALT_ROUNDS = 10;
 
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -36,13 +38,39 @@ function generateVerificationCode() {
     return `VERIFY-${code}`;
 }
 
-// In-memory cache for recently verified codes (for polling endpoint resolution)
-const verifiedCodesCache = new Set();
+// In-memory cache for recently verified codes (for polling endpoint resolution).
+// Postgres is the source of truth (see /verify-code); this is only a same-pod fast
+// path, so entries are safe to expire. Without a TTL this Set grew forever -- any
+// verification flow a user abandoned before /reset-password ran `.delete()` left its
+// code in memory for the lifetime of the process, a slow unbounded memory leak.
+const VERIFIED_CODE_TTL_MS = 30 * 60 * 1000; // 30 min covers the WhatsApp round trip with margin
+const verifiedCodesCache = new Map(); // code -> expiresAt
+
+function cacheVerifiedCode(code) {
+    verifiedCodesCache.set(code, Date.now() + VERIFIED_CODE_TTL_MS);
+}
+
+function isVerifiedCodeCached(code) {
+    const expiresAt = verifiedCodesCache.get(code);
+    if (expiresAt === undefined) return false;
+    if (Date.now() > expiresAt) {
+        verifiedCodesCache.delete(code);
+        return false;
+    }
+    return true;
+}
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [code, expiresAt] of verifiedCodesCache) {
+        if (now > expiresAt) verifiedCodesCache.delete(code);
+    }
+}, 5 * 60 * 1000).unref();
 
 // Helper: send OTP via WhatsApp worker (legacy fallback)
 async function sendWhatsAppOTP(phone, message) {
     const workerUrl = process.env.WHATSAPP_WORKER_URL || 'https://sound-scout-whatsapp-worker.onrender.com';
-    const workerSecret = process.env.WORKER_SECRET || 'super_secret_key';
+    const workerSecret = WORKER_SECRET;
 
     try {
         await axios.post(`${workerUrl}/api/send-message`, {
@@ -105,7 +133,7 @@ router.get('/bot-phone', async (req, res) => {
 });
 
 // POST /api/users/register - Create a new user with password hashing & Click-to-Verify code
-router.post('/register', async (req, res) => {
+router.post('/register', authLimiter, validateBody(schemas.register), async (req, res) => {
     const { name, email, role, region, password, phone } = req.body;
 
     if (!name || !email || !role || !password) {
@@ -174,7 +202,7 @@ router.post('/register', async (req, res) => {
 });
 
 // POST /api/users/login - Authenticate user and issue rotated tokens
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, validateBody(schemas.login), async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -467,7 +495,7 @@ router.put('/profile', async (req, res) => {
 });
 
 // POST /api/users/verify-otp - Verify 6-digit WhatsApp code
-router.post('/verify-otp', async (req, res) => {
+router.post('/verify-otp', otpLimiter, validateBody(schemas.verifyOtp), async (req, res) => {
     const { email, otp } = req.body;
 
     if (!email || !otp) {
@@ -504,7 +532,7 @@ router.post('/verify-otp', async (req, res) => {
 });
 
 // POST /api/users/resend-otp - Resend 6-digit WhatsApp code
-router.post('/resend-otp', async (req, res) => {
+router.post('/resend-otp', otpLimiter, validateBody(schemas.resendOtp), async (req, res) => {
     const { email } = req.body;
 
     if (!email) {
@@ -569,9 +597,9 @@ router.post('/subscribe-premium', authenticateUser, requireRole('vendor'), async
 });
 
 // POST /api/users/verify-code - Verify Click-to-Verify code sent from WhatsApp worker
-router.post('/verify-code', async (req, res) => {
+router.post('/verify-code', otpLimiter, async (req, res) => {
     const { secret, code, phone } = req.body;
-    const expectedSecret = process.env.WORKER_SECRET || 'super_secret_key';
+    const expectedSecret = WORKER_SECRET;
 
     if (secret !== expectedSecret) {
         return res.status(403).json({ success: false, message: 'Unauthorized' });
@@ -650,7 +678,7 @@ router.post('/verify-code', async (req, res) => {
         );
 
         // Keep in cache for polling endpoint resolution
-        verifiedCodesCache.add(cleanCode);
+        cacheVerifiedCode(cleanCode);
 
         console.log(`✅ Click-to-Verify successful for user_id=${user.user_id} (${user.email}) with code ${cleanCode}`);
         return res.status(200).json({ success: true, message: 'User verified' });
@@ -661,7 +689,7 @@ router.post('/verify-code', async (req, res) => {
 });
 
 // GET /api/users/verification-status/:code - Check polling status for verification code
-router.get('/verification-status/:code', async (req, res) => {
+router.get('/verification-status/:code', otpLimiter, async (req, res) => {
     const { code } = req.params;
     if (!code) {
         return res.status(400).json({ isVerified: false, error: 'Code parameter is required' });
@@ -671,7 +699,7 @@ router.get('/verification-status/:code', async (req, res) => {
         const cleanCode = code.trim().toUpperCase();
 
         // 0. Check in-memory verified cache (same-pod fast path)
-        if (verifiedCodesCache.has(cleanCode)) {
+        if (isVerifiedCodeCached(cleanCode)) {
             return res.status(200).json({ isVerified: true });
         }
 
@@ -706,7 +734,7 @@ router.get('/verification-status/:code', async (req, res) => {
 });
 
 // POST /api/users/forgot-password - Request password reset code via WhatsApp
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', authLimiter, validateBody(schemas.forgotPassword), async (req, res) => {
     const { email } = req.body;
     if (!email || !email.trim()) {
         return res.status(400).json({ error: 'Email address is required.' });
@@ -758,7 +786,7 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 // POST /api/users/reset-password - Reset password after verifying code
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', authLimiter, validateBody(schemas.resetPassword), async (req, res) => {
     const { email, code, newPassword } = req.body;
 
     if (!email || !code || !newPassword) {
@@ -788,7 +816,7 @@ router.post('/reset-password', async (req, res) => {
         // /forgot-password just handed back in its own response -- no WhatsApp step required.
         // verifiedCodesCache is a same-pod fast path; the DB check is the reliable source of
         // truth across replicas, since /verify-code marks confirmation there as "CONFIRMED:<code>".
-        const isVerified = verifiedCodesCache.has(cleanCode) ||
+        const isVerified = isVerifiedCodeCached(cleanCode) ||
             (user.verification_code && user.verification_code.toUpperCase() === `CONFIRMED:${cleanCode}`);
         if (!isVerified) {
             return res.status(400).json({ error: 'Verification code is invalid or has not been confirmed via WhatsApp yet.' });

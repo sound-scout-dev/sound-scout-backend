@@ -3,9 +3,11 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const { authenticateUser, requireRole } = require('../middleware/auth');
+const { validateBody } = require('../middleware/validate');
+const schemas = require('../validation/schemas');
 
 // POST /api/ratings - Organizer rates a vendor after working with them on an event
-router.post('/', authenticateUser, requireRole('organizer'), async (req, res) => {
+router.post('/', authenticateUser, requireRole('organizer'), validateBody(schemas.createRating), async (req, res) => {
     const { event_id, vendor_id, rating, review } = req.body;
     const organizer_id = req.user.user_id;
 
