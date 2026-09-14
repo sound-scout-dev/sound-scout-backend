@@ -40,6 +40,18 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- In-app "rate SoundScout" prompts (platform feedback, not vendor reviews). Authoritative
+-- CREATE TABLE runs in config/db.js; kept here for reference like the rest of this file.
+CREATE TABLE IF NOT EXISTS app_feedback (
+    feedback_id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    trigger_type VARCHAR(50) NOT NULL,
+    reference_id INT,
+    rating SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS bids (
     bid_id SERIAL PRIMARY KEY,
     event_id INTEGER NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,

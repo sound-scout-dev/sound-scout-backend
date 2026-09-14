@@ -74,6 +74,19 @@ pool.query(`
 
     UPDATE rental_items SET qty = 2 WHERE qty <= 0 OR qty IS NULL;
 
+    -- In-app "rate SoundScout" prompts (distinct from vendor_ratings/reviews, which rate a
+    -- vendor, not the platform). trigger_type + reference_id let the frontend avoid asking
+    -- twice for the same event/bid via a localStorage check.
+    CREATE TABLE IF NOT EXISTS app_feedback (
+        feedback_id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        trigger_type VARCHAR(50) NOT NULL,
+        reference_id INT,
+        rating SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+        comment TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     -- Postgres does not auto-index foreign key columns (only PKs and UNIQUE
     -- constraints get one). Every one of these is filtered on directly in routes/*.js
     -- (e.g. "WHERE organizer_id = $1", "WHERE event_id = $1") and had no index at all,
@@ -90,6 +103,8 @@ pool.query(`
     CREATE INDEX IF NOT EXISTS idx_rental_bookings_renter_id ON rental_bookings(renter_id);
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token_hash ON refresh_tokens(token_hash);
+    CREATE INDEX IF NOT EXISTS idx_app_feedback_user_id ON app_feedback(user_id);
+    CREATE INDEX IF NOT EXISTS idx_app_feedback_trigger_type ON app_feedback(trigger_type);
 `).then(() => {
     console.log('✅ User, Event, and Rental schemas verified.');
 }).catch(err => console.error('⚠️ DB Migration notice:', err.message));

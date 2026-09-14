@@ -49,6 +49,16 @@ spec:
                 secretKeyRef:
                   name: sound-scout-secrets
                   key: WORKER_SECRET
+            - name: ACCESS_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sound-scout-secrets
+                  key: ACCESS_TOKEN_SECRET
+            - name: REFRESH_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sound-scout-secrets
+                  key: REFRESH_TOKEN_SECRET
           livenessProbe:
             httpGet:
               path: /api/health
