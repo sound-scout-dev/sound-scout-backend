@@ -88,7 +88,15 @@ const createRating = z.object({
     review: z.string().trim().optional().nullable(),
 });
 
+const createAppFeedback = z.object({
+    triggerType: z.enum(['event_created', 'bid_placed', 'event_finished']),
+    referenceId: z.coerce.number().int().positive().optional().nullable(),
+    rating: z.coerce.number().int().min(1).max(5),
+    comment: z.string().trim().max(2000).optional().nullable(),
+});
+
 module.exports = {
     register, login, forgotPassword, resetPassword, verifyOtp, resendOtp,
     createEvent, createBid, createRentalItem, bookRental, createRating, createReview,
+    createAppFeedback,
 };

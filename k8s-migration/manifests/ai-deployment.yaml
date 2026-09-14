@@ -6,7 +6,12 @@ metadata:
   labels:
     app: sound-scout-ai
 spec:
-  replicas: 1
+  # Was 1 -- a single pod meant any crash/OOM/restart took the whole AI feature down with
+  # no fallback (this is very likely what caused the intermittent pitch-demo failure).
+  # LangGraph calls are stateless per-request (no session affinity, unlike the WhatsApp
+  # worker), so running 2 replicas behind the existing ClusterIP Service is a safe way to
+  # remove that single point of failure -- request footprint only grows by 100m CPU / 300Mi.
+  replicas: 2
   selector:
     matchLabels:
       app: sound-scout-ai

@@ -194,6 +194,7 @@ const eventRoutes = require('./routes/events');
 const bidRoutes = require('./routes/bids');
 const inventoryRoutes = require('./routes/inventory');
 const rentalRoutes = require('./routes/rentals');
+const feedbackRoutes = require('./routes/feedback');
 
 // Use Routes
 app.use('/api/users', userRoutes);
@@ -201,6 +202,7 @@ app.use('/api/events', eventRoutes);
 app.use('/api/bids', bidRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/rentals', rentalRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 
 // Start server on server.listen (supports both HTTP & WebSockets)
