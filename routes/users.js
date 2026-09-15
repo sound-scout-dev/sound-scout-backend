@@ -5,7 +5,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const axios = require('axios');
-const { authenticateUser, requireRole } = require('../middleware/auth');
+const { authenticateUser } = require('../middleware/auth');
 const { ACCESS_TOKEN_SECRET, REFRESH_TOKEN_SECRET, WORKER_SECRET } = require('../config/secrets');
 const { authLimiter, otpLimiter } = require('../middleware/rateLimit');
 const { validateBody } = require('../middleware/validate');
@@ -289,7 +289,9 @@ router.post('/login', authLimiter, validateBody(schemas.login), async (req, res)
                 role: user.role,
                 region: user.region,
                 phone: user.phone,
-                is_verified: user.is_verified
+                is_verified: user.is_verified,
+                is_premium: user.is_premium,
+                subscription_expires_at: user.subscription_expires_at
             },
             accessToken,
             refreshToken
@@ -573,17 +575,21 @@ router.post('/resend-otp', otpLimiter, validateBody(schemas.resendOtp), async (r
     }
 });
 
-// POST /api/users/subscribe-premium - Turn vendor into premium status
-router.post('/subscribe-premium', authenticateUser, requireRole('vendor'), async (req, res) => {
-    const vendor_id = req.user.user_id;
+// POST /api/users/subscribe-premium - Upgrade the current account to premium.
+// Previously restricted to requireRole('vendor') -- that made sense when premium
+// only meant "boosted visibility in bid listings" (see the ORDER BY u.is_premium
+// in routes/bids.js), but organizers now also need premium for the Venue
+// Blueprint feature. Premium is an account-level upgrade, not role-specific.
+router.post('/subscribe-premium', authenticateUser, async (req, res) => {
+    const user_id = req.user.user_id;
     try {
         const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
         await pool.query(
-            `UPDATE users 
-             SET is_premium = true, 
-                 subscription_expires_at = $1 
+            `UPDATE users
+             SET is_premium = true,
+                 subscription_expires_at = $1
              WHERE user_id = $2`,
-            [expiresAt, vendor_id]
+            [expiresAt, user_id]
         );
         res.status(200).json({
             message: 'Successfully subscribed to Monthly Premium Plan!',

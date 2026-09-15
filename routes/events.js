@@ -2,9 +2,14 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const fetch = require('node-fetch');
+const FormData = require('form-data');
 const { authenticateUser, requireRole } = require('../middleware/auth');
+const { requirePremium } = require('../middleware/premium');
 const { withUserContext } = require('../middleware/dbContext');
 const { validateBody } = require('../middleware/validate');
+const { uploadImage, handleUploadErrors } = require('../middleware/upload');
+const { getAiServiceBaseUrl } = require('../config/aiService');
 const schemas = require('../validation/schemas');
 
 function extractDistrictFromLocation(location) {
@@ -214,6 +219,66 @@ router.post('/:eventId/generate-plan', authenticateUser, requireRole('organizer'
         res.status(500).json({ error: 'Server error while generating AI plan.' });
     }
 });
+
+// POST /api/events/:eventId/blueprint/analyze-photo - Premium Venue Blueprint feature.
+// Organizer uploads a drone/overhead photo of an OUTDOOR event's venue; this proxies it
+// to the AI service's Gemini Vision analysis (scale estimate + suggested stage box) the
+// same way generate-plan above proxies to /api/generate. requirePremium re-checks the
+// database on every call (not a JWT claim) so an expired subscription can't keep using
+// this after the token was issued. The actual AV item -> coordinate mapping is pure,
+// deterministic math done client-side (frontend/src/placement/avMapper.js) -- there's
+// nothing for Gemini to usefully add there, so it isn't round-tripped through this proxy.
+router.post(
+    '/:eventId/blueprint/analyze-photo',
+    authenticateUser,
+    requireRole('organizer'),
+    requirePremium,
+    uploadImage.single('image'),
+    handleUploadErrors,
+    async (req, res) => {
+        const { eventId } = req.params;
+        const organizer_id = req.user.user_id;
+
+        if (!req.file) {
+            return res.status(400).json({ error: 'No image file received.' });
+        }
+
+        try {
+            const eventResult = await pool.query('SELECT organizer_id, environment FROM events WHERE event_id = $1', [eventId]);
+            if (eventResult.rowCount === 0) {
+                return res.status(404).json({ error: 'Event not found.' });
+            }
+            const event = eventResult.rows[0];
+            if (event.organizer_id !== organizer_id) {
+                return res.status(403).json({ error: 'Access forbidden. You do not own this event.' });
+            }
+            if (event.environment !== 'Outdoor') {
+                return res.status(400).json({ error: 'Venue Blueprint is only available for outdoor events.' });
+            }
+
+            const baseUrl = getAiServiceBaseUrl();
+            const targetUrl = `${baseUrl}/api/analyze-venue-photo`;
+
+            const form = new FormData();
+            form.append('image', req.file.buffer, {
+                filename: req.file.originalname || 'venue.jpg',
+                contentType: req.file.mimetype || 'image/jpeg',
+            });
+
+            const aiResponse = await fetch(targetUrl, {
+                method: 'POST',
+                headers: form.getHeaders(),
+                body: form,
+            });
+
+            const data = await aiResponse.json();
+            res.status(aiResponse.status).json(data);
+        } catch (err) {
+            console.error('Blueprint photo analysis error:', err.message);
+            res.status(500).json({ error: 'Server error while analyzing venue photo.' });
+        }
+    }
+);
 
 // GET /api/events/:eventId - Fetch details of a specific event
 router.get('/:eventId', authenticateUser, async (req, res) => {
