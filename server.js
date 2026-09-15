@@ -84,48 +84,9 @@ app.get('/api/health', (req, res) => {
 
 // Import Routes
 const fetch = require('node-fetch');
-const multer = require('multer');
 const FormData = require('form-data');
-
-// Previously `multer({ storage: memoryStorage() })` had no fileFilter or limits, so
-// these proxy endpoints accepted a file of any type or size under the 'audio'/'image'
-// field name -- no MIME check, no size cap, nothing stopping an .exe or a
-// multi-gigabyte upload from being buffered into memory and forwarded to the AI
-// service. Each endpoint below gets its own instance scoped to the type it actually
-// handles.
-function uploadFor(allowedMimePrefix, maxSizeMb) {
-    return multer({
-        storage: multer.memoryStorage(),
-        limits: { fileSize: maxSizeMb * 1024 * 1024 },
-        fileFilter: (req, file, cb) => {
-            if (!file.mimetype || !file.mimetype.startsWith(allowedMimePrefix)) {
-                return cb(new Error(`Only ${allowedMimePrefix}* files are allowed.`));
-            }
-            cb(null, true);
-        }
-    });
-}
-
-const uploadAudio = uploadFor('audio/', 15);
-const uploadImage = uploadFor('image/', 8);
-
-// Multer surfaces fileFilter rejections and size-limit overruns as errors passed to
-// next(), which would otherwise fall through to Express's default HTML error page.
-function handleUploadErrors(err, req, res, next) {
-    if (err instanceof multer.MulterError || err) {
-        return res.status(400).json({ error: err.message || 'Upload rejected.' });
-    }
-    next();
-}
-const getAiServiceBaseUrl = () => {
-    const envUrl = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-    try {
-        const parsed = new URL(envUrl);
-        return parsed.origin;
-    } catch (e) {
-        return envUrl.replace(/\/api\/generate\/?$/, '').replace(/\/$/, '');
-    }
-};
+const { uploadAudio, uploadImage, handleUploadErrors } = require('./middleware/upload');
+const { getAiServiceBaseUrl } = require('./config/aiService');
 
 // AI Proxy Routes
 // multer parses the multipart upload into memory; we rebuild a proper FormData to forward to Flask
