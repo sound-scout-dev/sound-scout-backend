@@ -602,6 +602,34 @@ router.post('/subscribe-premium', authenticateUser, async (req, res) => {
     }
 });
 
+// POST /api/users/cancel-premium - End the current account's premium subscription.
+// Clears the expiry too, so nothing is left behind for requirePremium to read as
+// a still-valid window.
+router.post('/cancel-premium', authenticateUser, async (req, res) => {
+    const user_id = req.user.user_id;
+    try {
+        const result = await pool.query(
+            `UPDATE users
+             SET is_premium = false,
+                 subscription_expires_at = NULL
+             WHERE user_id = $1
+             RETURNING user_id`,
+            [user_id]
+        );
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Account not found.' });
+        }
+        res.status(200).json({
+            message: 'Your Premium subscription has been cancelled.',
+            is_premium: false,
+            subscription_expires_at: null
+        });
+    } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ error: 'Server error cancelling premium.' });
+    }
+});
+
 // POST /api/users/verify-code - Verify Click-to-Verify code sent from WhatsApp worker
 router.post('/verify-code', otpLimiter, async (req, res) => {
     const { secret, code, phone } = req.body;
